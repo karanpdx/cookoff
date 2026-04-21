@@ -33,6 +33,7 @@ export default function PhotoSubmitScreen({ route, navigation }) {
     budget,
     skillLevel,
     avatarUri,
+    cookTimeTarget = 20,
   } = route.params || {};
   const { addDishSubmission } = useGameSession();
   const [photoUri, setPhotoUri] = useState(null);
@@ -107,6 +108,7 @@ export default function PhotoSubmitScreen({ route, navigation }) {
       budget,
       skillLevel,
       avatarUri,
+      cookTimeTarget,
     });
   };
 

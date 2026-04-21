@@ -65,6 +65,20 @@ const COOKING_PROMPTS = [
 
 const DEFAULT_TOTAL_SECONDS = 20 * 60;
 
+function resolveInitialTotalSeconds(routeParams) {
+  if (
+    typeof routeParams?.totalSeconds === 'number' &&
+    !Number.isNaN(routeParams.totalSeconds)
+  ) {
+    return Math.max(60, Math.min(3600, Math.round(routeParams.totalSeconds)));
+  }
+  const m = routeParams?.cookTimeTarget;
+  if (typeof m === 'number' && !Number.isNaN(m)) {
+    return Math.min(60 * 60, Math.max(10 * 60, Math.round(m) * 60));
+  }
+  return DEFAULT_TOTAL_SECONDS;
+}
+
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -88,6 +102,36 @@ function normalizeCookTime(minutes) {
   return Math.min(60, Math.max(5, Math.round(n)));
 }
 
+function buildRecipeChefPrompt({ dishOrCuisine, budget, cookTimeTarget, modifiers, skillLevel }) {
+  const modLine = Array.isArray(modifiers) && modifiers.length ? modifiers.join(', ') : 'none';
+  return `You are a professional chef generating a recipe. STRICT CONSTRAINTS you MUST follow:
+
+DISH: ${dishOrCuisine}
+BUDGET: $${budget} USD — total ingredient cost must fit within this
+TIME CONSTRAINT: Recipe must complete in approximately ${cookTimeTarget} minutes
+MODIFIERS: ${modLine} — recipe MUST match these characteristics
+SKILL LEVEL: ${skillLevel}
+
+Rules:
+- If modifiers include 'Hot' — use heat/spice
+- If 'Cold' — NO cooking steps with heat
+- If 'Soupy' — broth-based
+- If 'Quick' — max 20 minutes total
+- If 'Fancy' — plating emphasis, garnishes
+- Generate a SPECIFIC recipe that matches the dish name exactly, not a generic substitute
+- Budget $15 = simple ingredients, $50+ = premium (steak, seafood)
+- Each call MUST differ from previous calls — vary proteins, techniques, garnishes
+
+Return ONLY valid JSON (no markdown):
+{
+  "dishName": "specific creative name",
+  "cookTime": integer minutes,
+  "estimatedCost": integer dollars,
+  "ingredients": ["specific qty + ingredient", ...],
+  "steps": ["numbered specific action 1-2 sentences each", ...]
+}`;
+}
+
 function parseRecipeFromClaude(text) {
   const trimmed = (text || '').trim();
   const jsonCandidate = trimmed.startsWith('{')
@@ -105,17 +149,25 @@ function parseRecipeFromClaude(text) {
   const stepStrs = steps
     .map((s) => (typeof s === 'string' ? s : s?.text != null ? String(s.text) : String(s)))
     .filter(Boolean);
-  if (stepStrs.length < 5) throw new Error('Too few steps');
+  if (stepStrs.length < 4) throw new Error('Too few steps');
   const rawName = parsed.dishName;
   const dishName =
     typeof rawName === 'string' && rawName.trim()
       ? rawName.trim()
       : "Chef's challenge plate";
+  const est = parsed.estimatedCost;
+  const estimatedCost =
+    typeof est === 'number' && Number.isFinite(est)
+      ? Math.max(0, Math.round(est))
+      : typeof est === 'string' && /^\d+$/.test(est.trim())
+        ? parseInt(est.trim(), 10)
+        : null;
   return {
     cookTime,
     dishName,
     ingredients: ingStrs,
-    steps: stepStrs.slice(0, 7),
+    steps: stepStrs.slice(0, 12),
+    estimatedCost,
   };
 }
 
@@ -146,7 +198,17 @@ function fallbackRecipe(title, cuisineType, budget) {
 }
 
 export default function CookingChallengeScreen({ route, navigation }) {
-  const { playerName, gameCode, role, cuisineType, modifiers = [], budget, skillLevel, avatarUri } = route.params;
+  const {
+    playerName,
+    gameCode,
+    role,
+    cuisineType,
+    modifiers = [],
+    budget,
+    skillLevel,
+    avatarUri,
+    cookTimeTarget = 20,
+  } = route.params;
   const {
     liveRoast,
     liveRoastSeq,
@@ -157,13 +219,11 @@ export default function CookingChallengeScreen({ route, navigation }) {
     setKitchenChallenge,
     setSessionRecipe,
   } = useGameSession();
-  const sessionKey = `${cuisineType}|${budget}|${skillLevel}`;
+  const cookTimeTargetMinutes = Math.min(60, Math.max(10, Math.round(Number(cookTimeTarget)) || 20));
+  const sessionKey = `${cuisineType}|${budget}|${skillLevel}|${cookTimeTargetMinutes}`;
   const isCompetitor = role === 'COMPETITOR';
   const isFocused = useIsFocused();
-  const initialTotalSeconds =
-    typeof route.params?.totalSeconds === 'number' && !Number.isNaN(route.params?.totalSeconds)
-      ? route.params.totalSeconds
-      : DEFAULT_TOTAL_SECONDS;
+  const initialTotalSeconds = resolveInitialTotalSeconds(route.params || {});
   const [totalSeconds, setTotalSeconds] = useState(initialTotalSeconds);
   const [prompt, setPrompt] = useState(null);
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(true);
@@ -287,7 +347,13 @@ export default function CookingChallengeScreen({ route, navigation }) {
             messages: [
               {
                 role: 'user',
-                content: `Generate a highly unique recipe for '${cuisineType}' with modifiers: [${modifiers.join(', ')}]. Budget $${budget}. The recipe MUST directly match the challenge title '${challengeTitle}'. The recipe style MUST reflect modifiers — if 'Quick' steps should be 5-10 min total, if 'Soupy' include broth-based steps, if 'Cold' no heat application. Each recipe call MUST differ from previous — vary technique, plating, garnishes. Avoid generic recipes unless explicitly matching. Return JSON: dishName (specific creative name), cookTime (realistic integer minutes, varies dramatically based on dish — guac 10min, steak 25min, braised 90min), ingredients (exact quantities), steps (5-8 dish-specific actionable instructions, NEVER template phrases like 'mix everything' — always specific to dish). No markdown.`,
+                content: buildRecipeChefPrompt({
+                  dishOrCuisine: `${challengeTitle} — cuisine: ${cuisineType || 'chef choice'}`,
+                  budget,
+                  cookTimeTarget: Math.max(5, Math.round(initialTotalSeconds / 60)),
+                  modifiers,
+                  skillLevel: skillLevel || 'Intermediate',
+                }),
               },
             ],
           }),
@@ -296,8 +362,8 @@ export default function CookingChallengeScreen({ route, navigation }) {
         if (!response.ok) throw new Error('Recipe request failed');
         const data = await response.json();
         const text = data?.content?.[0]?.text;
-        const { cookTime, dishName, ingredients, steps } = parseRecipeFromClaude(text);
-        if (!cancelled && ingredients.length && steps.length >= 5) {
+        const { cookTime, dishName, ingredients, steps, estimatedCost } = parseRecipeFromClaude(text);
+        if (!cancelled && ingredients.length && steps.length >= 4) {
           const computedSeconds = cookTime * 60;
           setTotalSeconds(computedSeconds);
           if (typeof route.params?.secondsLeft !== 'number') {
@@ -312,6 +378,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
             steps,
             cookTime,
             challengeTitle,
+            ...(estimatedCost != null ? { estimatedCost } : {}),
           });
         } else if (!cancelled) {
           const fb = fallbackRecipe(challengeTitle, cuisineType, budget);
@@ -364,7 +431,16 @@ export default function CookingChallengeScreen({ route, navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [prompt?.title, cuisineType, modifiers, budget, isCompetitor, setSessionRecipe]);
+  }, [
+    prompt?.title,
+    cuisineType,
+    modifiers,
+    budget,
+    skillLevel,
+    initialTotalSeconds,
+    isCompetitor,
+    setSessionRecipe,
+  ]);
 
   // Restore timer when returning (e.g. from Sabotage) with updated params
   useEffect(() => {
@@ -423,6 +499,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
         budget,
         skillLevel,
         avatarUri,
+        cookTimeTarget: cookTimeTargetMinutes,
       });
     } else {
       navigation.navigate('PhotoSubmit', {
@@ -434,9 +511,21 @@ export default function CookingChallengeScreen({ route, navigation }) {
         budget,
         skillLevel,
         avatarUri,
+        cookTimeTarget: cookTimeTargetMinutes,
       });
     }
-  }, [navigation, playerName, gameCode, role, cuisineType, modifiers, budget, skillLevel, avatarUri]);
+  }, [
+    navigation,
+    playerName,
+    gameCode,
+    role,
+    cuisineType,
+    modifiers,
+    budget,
+    skillLevel,
+    avatarUri,
+    cookTimeTargetMinutes,
+  ]);
 
   const togglePause = () => {
     setIsRunning((prev) => !prev);

@@ -35,6 +35,7 @@ export default function JudgingScreen({ route, navigation }) {
     budget,
     skillLevel,
     avatarUri,
+    cookTimeTarget = 20,
   } = route.params || {};
   const { kitchenChallenge, sessionRecipe } = useGameSession();
   const [score, setScore] = useState(7);
@@ -62,6 +63,7 @@ export default function JudgingScreen({ route, navigation }) {
       budget,
       skillLevel,
       avatarUri,
+      cookTimeTarget,
     });
   };
 

@@ -133,6 +133,13 @@ const MODIFIER_CHIPS = [
   'Savory',
 ];
 
+const COOK_TIME_OPTIONS = [
+  { label: 'Quick', minutes: 10 },
+  { label: 'Standard', minutes: 20 },
+  { label: 'Extended', minutes: 45 },
+  { label: 'Marathon', minutes: 60 },
+];
+
 const SKILL_LEVELS = [
   { key: 'Beginner', emoji: '🥄' },
   { key: 'Intermediate', emoji: '🍳' },
@@ -145,6 +152,7 @@ export default function SetupScreen({ route, navigation }) {
   const [cuisineQuery, setCuisineQuery] = useState('');
   const [modifiers, setModifiers] = useState([]);
   const [budget, setBudget] = useState('');
+  const [cookTimeTarget, setCookTimeTarget] = useState(20);
   const [skillLevel, setSkillLevel] = useState('Beginner');
 
   const numericBudget = useMemo(() => {
@@ -185,6 +193,7 @@ export default function SetupScreen({ route, navigation }) {
       cuisineType,
       modifiers,
       budget: numericBudget,
+      cookTimeTarget,
       skillLevel,
     });
   };
@@ -290,6 +299,50 @@ export default function SetupScreen({ route, navigation }) {
                 keyboardType="number-pad"
                 returnKeyType="done"
               />
+            </View>
+          </ChunkyCard>
+
+          {/* Cook time target */}
+          <ChunkyCard style={styles.cardSpacing}>
+            <SectionLabel>Cook time</SectionLabel>
+            <Text style={styles.cookTimeHint}>How long competitors get in the kitchen</Text>
+            <View style={styles.cookTimeGrid}>
+              {[0, 2].map((start) => (
+                <View key={start} style={styles.cookTimeRow}>
+                  {COOK_TIME_OPTIONS.slice(start, start + 2).map(({ label, minutes }) => {
+                    const selected = cookTimeTarget === minutes;
+                    return (
+                      <TouchableOpacity
+                        key={minutes}
+                        style={[
+                          styles.cookTimeTab,
+                          selected ? styles.cookTimeTabSelected : styles.cookTimeTabUnselected,
+                        ]}
+                        onPress={() => setCookTimeTarget(minutes)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.cookTimeLabel,
+                            selected ? styles.cookTimeLabelSelected : styles.cookTimeLabelUnselected,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {label}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.cookTimeMins,
+                            selected ? styles.cookTimeMinsSelected : styles.cookTimeMinsUnselected,
+                          ]}
+                        >
+                          {minutes} min
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
             </View>
           </ChunkyCard>
 
@@ -406,6 +459,57 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: PALETTE.ink,
     paddingVertical: 10,
+  },
+  cookTimeHint: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 13,
+    color: PALETTE.espresso + 'AA',
+    marginBottom: 10,
+  },
+  cookTimeGrid: {
+    gap: 8,
+  },
+  cookTimeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  cookTimeTab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: PALETTE.espresso,
+    gap: 2,
+  },
+  cookTimeTabSelected: {
+    backgroundColor: PALETTE.tomato,
+  },
+  cookTimeTabUnselected: {
+    backgroundColor: PALETTE.paper,
+  },
+  cookTimeLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  cookTimeLabelSelected: {
+    color: '#FFFFFF',
+  },
+  cookTimeLabelUnselected: {
+    color: PALETTE.espresso,
+  },
+  cookTimeMins: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 13,
+  },
+  cookTimeMinsSelected: {
+    color: '#FFFFFF',
+  },
+  cookTimeMinsUnselected: {
+    color: PALETTE.espresso,
   },
   skillRow: {
     flexDirection: 'row',

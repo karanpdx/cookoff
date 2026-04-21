@@ -55,12 +55,22 @@ function assignRole() {
 }
 
 export default function RoleAssignmentScreen({ route, navigation }) {
-  const { playerName, gameCode, isHost, cuisineType, modifiers = [], budget, skillLevel, avatarUri } = route.params;
+  const {
+    playerName,
+    gameCode,
+    isHost,
+    cuisineType,
+    modifiers = [],
+    budget,
+    skillLevel,
+    avatarUri,
+    cookTimeTarget = 20,
+  } = route.params;
   const { kitchenChallenge, kitchenChallengeKey, setKitchenChallenge } = useGameSession();
   const [role] = useState(() => assignRole());
   const [revealed, setRevealed] = useState(false);
   const [challengeLoading, setChallengeLoading] = useState(true);
-  const sessionKey = `${cuisineType}|${budget}|${skillLevel}`;
+  const sessionKey = `${cuisineType}|${budget}|${skillLevel}|${cookTimeTarget}`;
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.5)).current;
@@ -145,6 +155,7 @@ export default function RoleAssignmentScreen({ route, navigation }) {
       budget,
       skillLevel,
       avatarUri,
+      cookTimeTarget,
     };
     if (role.name === 'SPECTATOR') {
       navigation.navigate('Spectator', {
@@ -156,6 +167,7 @@ export default function RoleAssignmentScreen({ route, navigation }) {
         budget,
         skillLevel,
         avatarUri,
+        cookTimeTarget,
       });
     } else {
       navigation.navigate('CookingChallenge', base);
