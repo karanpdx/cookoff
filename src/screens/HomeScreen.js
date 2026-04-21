@@ -1,332 +1,351 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  Modal,
   Alert,
+  Image,
+  TouchableOpacity,
+  Dimensions,
+  Keyboard,
+  TouchableWithoutFeedback,
   ScrollView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { addDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../firebase';
+import {
+  PALETTE,
+  ChunkyBtn,
+  ChunkyCard,
+  DrippyTitle,
+  CloudBg,
+  SectionLabel,
+} from '../components/DesignSystem';
+import { useBackgroundMusic } from '../hooks/useBackgroundMusic';
+
+const HERO_IMAGE_HEIGHT = Dimensions.get('window').height * 0.35;
 
 export default function HomeScreen({ navigation }) {
+  const { isMuted, toggleMute } = useBackgroundMusic();
   const [playerName, setPlayerName] = useState('');
   const [joinCode, setJoinCode] = useState('');
-  const [joinModalVisible, setJoinModalVisible] = useState(false);
+  const hiddenInputRef = useRef(null);
 
-  const validateName = () => {
-    if (!playerName.trim()) {
-      Alert.alert('Hold up! 🍳', 'Enter your name before jumping in the kitchen!');
-      return false;
+  const resolvedName = playerName.trim() || 'Player';
+
+  const handleCreateGame = async () => {
+    try {
+      const gameCode = Math.floor(1000 + Math.random() * 9000).toString();
+      await addDoc(collection(db, 'rooms'), {
+        gameCode,
+        status: 'waiting',
+        players: [],
+        createdAt: Date.now(),
+      });
+      navigation.navigate('Setup', {
+        playerName: resolvedName,
+        gameCode,
+        isHost: true,
+      });
+    } catch {
+      Alert.alert('Error', 'Could not create game. Check your connection and try again.');
     }
-    return true;
   };
 
-  const handleCreateGame = () => {
-    if (!validateName()) return;
-    const gameCode = Math.floor(1000 + Math.random() * 9000).toString();
-    navigation.navigate('RoleAssignment', { playerName: playerName.trim(), gameCode, isHost: true });
-  };
-
-  const handleJoinGame = () => {
-    if (!validateName()) return;
-    setJoinModalVisible(true);
-  };
-
-  const handleConfirmJoin = () => {
-    if (joinCode.length !== 4) {
-      Alert.alert('Invalid Code', 'Game code must be exactly 4 digits.');
-      return;
+  const handleJoinGame = async () => {
+    const code = joinCode.replace(/\D/g, '').slice(0, 4);
+    if (code.length !== 4) return;
+    try {
+      const q = query(collection(db, 'rooms'), where('gameCode', '==', code));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        Alert.alert('Game not found');
+        return;
+      }
+      navigation.navigate('Setup', {
+        playerName: resolvedName,
+        gameCode: code,
+        isHost: false,
+      });
+    } catch {
+      Alert.alert('Error', 'Could not look up game. Check your connection and try again.');
     }
-    setJoinModalVisible(false);
-    navigation.navigate('RoleAssignment', { playerName: playerName.trim(), gameCode: joinCode, isHost: false });
   };
+
+  const joinDigits = joinCode.replace(/\D/g, '');
+  const canJoin = joinDigits.length === 4;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+    <SafeAreaView style={styles.safe}>
+      <CloudBg />
+      <TouchableOpacity style={styles.muteToggle} onPress={toggleMute} activeOpacity={0.85}>
+        <Text style={styles.muteToggleText}>{isMuted ? '🔇' : '🔊'}</Text>
+      </TouchableOpacity>
+
+      <KeyboardAvoidingView
+        style={styles.kav}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        {/* Logo / Header */}
-        <View style={styles.logoContainer}>
-          <Text style={styles.logoEmoji}>🔥</Text>
-          <Text style={styles.logoTitle}>COOK</Text>
-          <Text style={styles.logoAccent}>OFF</Text>
-          <Text style={styles.logoTagline}>May the best chef win</Text>
-        </View>
-
-        {/* Player Name Input */}
-        <View style={styles.inputSection}>
-          <Text style={styles.inputLabel}>YOUR NAME</Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Enter your chef name..."
-            placeholderTextColor="#555577"
-            value={playerName}
-            onChangeText={setPlayerName}
-            maxLength={20}
-            autoCapitalize="words"
-          />
-        </View>
-
-        {/* Buttons */}
-        <View style={styles.buttonSection}>
-          <TouchableOpacity style={styles.primaryButton} onPress={handleCreateGame} activeOpacity={0.8}>
-            <Text style={styles.primaryButtonIcon}>🍽️</Text>
-            <Text style={styles.primaryButtonText}>CREATE GAME</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.secondaryButton} onPress={handleJoinGame} activeOpacity={0.8}>
-            <Text style={styles.secondaryButtonIcon}>🎯</Text>
-            <Text style={styles.secondaryButtonText}>JOIN GAME</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.footer}>3–6 players · Real-time cooking battles</Text>
-      </ScrollView>
-
-      {/* Join Game Modal */}
-      <Modal
-        visible={joinModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setJoinModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>🎯 JOIN GAME</Text>
-            <Text style={styles.modalSubtitle}>Enter the 4-digit game code</Text>
-            <TextInput
-              style={styles.codeInput}
-              placeholder="0000"
-              placeholderTextColor="#555577"
-              value={joinCode}
-              onChangeText={(t) => setJoinCode(t.replace(/[^0-9]/g, '').slice(0, 4))}
-              keyboardType="number-pad"
-              maxLength={4}
-              textAlign="center"
-              autoFocus
-            />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.modalCancel}
-                onPress={() => {
-                  setJoinModalVisible(false);
-                  setJoinCode('');
-                }}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={handleConfirmJoin}>
-                <Text style={styles.modalConfirmText}>JOIN!</Text>
-              </TouchableOpacity>
+        <TouchableWithoutFeedback
+          style={styles.dismissWrap}
+          onPress={Keyboard.dismiss}
+          accessible={false}
+        >
+          <ScrollView
+            style={styles.scrollView}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
+            {/* ── Title ─────────────────────────────────── */}
+            <View style={styles.titleArea}>
+              <DrippyTitle size={78} style={styles.titleText}>
+                {'COOK\nOFF'}
+              </DrippyTitle>
             </View>
-          </View>
-        </View>
-      </Modal>
-    </KeyboardAvoidingView>
+
+            {/* ── Hero illustration — fixed height (keyboard does not shrink it) ── */}
+            <View style={styles.heroWrapper}>
+              <View style={styles.heroCropMask}>
+                <Image
+                  source={require('../../assets/hero_home.png')}
+                  style={styles.heroImage}
+                  resizeMode="cover"
+                />
+              </View>
+            </View>
+
+            {/* ── Bottom content ─────────────────────────── */}
+            <View style={styles.content}>
+              {/* Your Chef card */}
+              <ChunkyCard p={12} style={styles.card}>
+                <SectionLabel style={styles.sectionLabel}>Your Chef</SectionLabel>
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputEmoji}>👨‍🍳</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Your chef name…"
+                    placeholderTextColor={PALETTE.espresso + '55'}
+                    value={playerName}
+                    onChangeText={setPlayerName}
+                    maxLength={24}
+                    autoCapitalize="words"
+                    returnKeyType="next"
+                  />
+                </View>
+              </ChunkyCard>
+
+              {/* Enter Game Code card */}
+              <ChunkyCard p={12} style={styles.card}>
+                <SectionLabel style={[styles.sectionLabel, styles.centerLabel]}>
+                  Enter Game Code
+                </SectionLabel>
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={() => hiddenInputRef.current?.focus()}
+                  style={styles.digitRow}
+                >
+                  {[0, 1, 2, 3].map((i) => {
+                    const digit = joinDigits[i] || '';
+                    return (
+                      <View key={i} style={[styles.digitBox, digit ? styles.digitBoxFilled : null]}>
+                        <Text style={styles.digitText}>{digit || '·'}</Text>
+                      </View>
+                    );
+                  })}
+                </TouchableOpacity>
+                <TextInput
+                  ref={hiddenInputRef}
+                  style={styles.hiddenInput}
+                  value={joinCode}
+                  onChangeText={(t) => setJoinCode(t.replace(/\D/g, '').slice(0, 4))}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  caretHidden
+                />
+              </ChunkyCard>
+
+              {/* Buttons */}
+              <View style={styles.btnGroup}>
+                <ChunkyBtn
+                  small
+                  bg={PALETTE.yellow}
+                  shadowColor={PALETTE.espresso}
+                  color={PALETTE.espresso}
+                  onPress={handleCreateGame}
+                  style={styles.btn}
+                >
+                  ▶ Create Game
+                </ChunkyBtn>
+                <ChunkyBtn
+                  small
+                  bg={PALETTE.tomato}
+                  shadowColor={PALETTE.espresso}
+                  color="#FFFFFF"
+                  onPress={handleJoinGame}
+                  disabled={!canJoin}
+                  style={styles.btn}
+                >
+                  Join Game
+                </ChunkyBtn>
+              </View>
+            </View>
+          </ScrollView>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: PALETTE.sky,
+  },
+  muteToggle: {
+    position: 'absolute',
+    right: 14,
+    top: 52,
+    zIndex: 5,
+    backgroundColor: PALETTE.paper,
+    borderWidth: 2,
+    borderColor: PALETTE.espresso,
+    borderRadius: 999,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  muteToggleText: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 20,
+  },
+  kav: {
+    flex: 1,
+  },
+  dismissWrap: {
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
+  },
+
+  // ── Title ──────────────────────────────────────
+  titleArea: {
     alignItems: 'center',
+    paddingTop: 14,
+    paddingHorizontal: 20,
+    // No absolute positioning — sits in natural flow at top
+  },
+  titleText: {
+    // Two lines (COOK / OFF) — compact line height so they sit snugly
+    lineHeight: 72,
+  },
+
+  // ── Hero — fixed height so keyboard does not resize it ──
+  heroWrapper: {
+    alignSelf: 'stretch',
+    height: HERO_IMAGE_HEIGHT,
+    marginBottom: 0,
     justifyContent: 'center',
-    paddingHorizontal: 28,
-    paddingVertical: 60,
-  },
-  logoContainer: {
     alignItems: 'center',
-    marginBottom: 48,
+    transform: [{ translateY: 20 }],
+    zIndex: 2,
   },
-  logoEmoji: {
-    fontSize: 72,
-    marginBottom: 8,
-  },
-  logoTitle: {
-    fontSize: 64,
-    fontWeight: '900',
-    color: '#ffffff',
-    letterSpacing: 8,
-    lineHeight: 68,
-  },
-  logoAccent: {
-    fontSize: 64,
-    fontWeight: '900',
-    color: '#ff6b35',
-    letterSpacing: 8,
-    lineHeight: 68,
-  },
-  logoTagline: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#8888aa',
-    letterSpacing: 3,
-    textTransform: 'uppercase',
-  },
-  inputSection: {
+  heroCropMask: {
     width: '100%',
-    marginBottom: 32,
+    height: HERO_IMAGE_HEIGHT - 14,
+    overflow: 'hidden',
   },
-  inputLabel: {
-    color: '#ff6b35',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 3,
+  heroImage: {
+    width: '100%',
+    height: HERO_IMAGE_HEIGHT + 28,
+  },
+
+  // ── Bottom content — tight to hero (0–8px gap) ─
+  content: {
+    marginTop: 4,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  card: {
     marginBottom: 10,
   },
+  sectionLabel: {
+    marginBottom: 6,
+  },
+  centerLabel: {
+    textAlign: 'center',
+  },
+
+  // Chef name input row
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: PALETTE.paper,
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+  },
+  inputEmoji: {
+    fontSize: 22,
+    marginRight: 8,
+  },
   textInput: {
-    backgroundColor: '#16213e',
-    borderWidth: 2,
-    borderColor: '#2a2a4e',
-    borderRadius: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    fontSize: 18,
-    color: '#ffffff',
-    fontWeight: '600',
-  },
-  buttonSection: {
-    width: '100%',
-    gap: 14,
-    marginBottom: 36,
-  },
-  primaryButton: {
-    backgroundColor: '#ff6b35',
-    borderRadius: 16,
-    paddingVertical: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    shadowColor: '#ff6b35',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  primaryButtonIcon: {
-    fontSize: 22,
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 2,
-  },
-  secondaryButton: {
-    backgroundColor: 'transparent',
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#ff6b35',
-    paddingVertical: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  secondaryButtonIcon: {
-    fontSize: 22,
-  },
-  secondaryButtonText: {
-    color: '#ff6b35',
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 2,
-  },
-  footer: {
-    color: '#444466',
-    fontSize: 13,
-    letterSpacing: 1,
-  },
-  // Modal
-  modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 18,
+    color: PALETTE.ink,
+    paddingVertical: 9,
+  },
+
+  // 4-digit code boxes
+  digitRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  digitBox: {
+    width: 52,
+    height: 56,
+    borderRadius: 14,
+    borderWidth: 3,
+    borderColor: PALETTE.creamEdge,
+    backgroundColor: PALETTE.paper,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 28,
   },
-  modalContainer: {
-    backgroundColor: '#16213e',
-    borderRadius: 24,
-    padding: 32,
-    width: '100%',
-    borderWidth: 2,
-    borderColor: '#2a2a4e',
-    alignItems: 'center',
+  digitBoxFilled: {
+    borderColor: PALETTE.espresso,
+    backgroundColor: PALETTE.cream,
   },
-  modalTitle: {
+  digitText: {
+    fontFamily: 'TitanOne_400Regular',
     fontSize: 26,
-    fontWeight: '900',
-    color: '#ffffff',
-    letterSpacing: 2,
-    marginBottom: 8,
+    color: PALETTE.red,
   },
-  modalSubtitle: {
-    fontSize: 14,
-    color: '#8888aa',
-    marginBottom: 24,
+  hiddenInput: {
+    position: 'absolute',
+    opacity: 0,
+    width: 1,
+    height: 1,
   },
-  codeInput: {
-    backgroundColor: '#1a1a2e',
-    borderWidth: 2,
-    borderColor: '#ff6b35',
-    borderRadius: 14,
-    width: '60%',
-    paddingVertical: 16,
-    fontSize: 32,
-    fontWeight: '900',
-    color: '#ff6b35',
-    letterSpacing: 8,
-    marginBottom: 28,
+
+  // Buttons
+  btnGroup: {
+    gap: 8,
+    marginTop: 2,
   },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 14,
-    width: '100%',
-  },
-  modalCancel: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#333355',
-    alignItems: 'center',
-  },
-  modalCancelText: {
-    color: '#8888aa',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  modalConfirm: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#ff6b35',
-    alignItems: 'center',
-    shadowColor: '#ff6b35',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  modalConfirmText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 2,
+  btn: {
+    marginBottom: 0,
   },
 });
