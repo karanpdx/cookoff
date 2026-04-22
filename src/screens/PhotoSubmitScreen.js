@@ -44,6 +44,21 @@ export default function PhotoSubmitScreen({ route, navigation }) {
   const [photoUri, setPhotoUri] = useState(null);
   const [dishName, setDishName] = useState('');
   const [selfId, setSelfId] = useState(playerId || null);
+  const roomPlayers = room?.players || [];
+  const roomStatus = room?.status || '';
+  const roomPlayersSig = React.useMemo(
+    () =>
+      JSON.stringify(
+        roomPlayers.map((p) => ({
+          id: p.id,
+          role: p.role,
+          isHost: p.isHost,
+          photoUri: p.photoUri || null,
+        }))
+      ),
+    [roomPlayers]
+  );
+  const stableRoomPlayers = React.useMemo(() => roomPlayers, [roomPlayersSig]);
 
   React.useEffect(() => {
     let mounted = true;
@@ -58,17 +73,16 @@ export default function PhotoSubmitScreen({ route, navigation }) {
   }, [selfId, getPlayerId]);
 
   React.useEffect(() => {
-    const players = room?.players || [];
-    if (!players.length) return;
-    const host = players.find((p) => p.isHost);
+    if (!stableRoomPlayers.length) return;
+    const host = stableRoomPlayers.find((p) => p.isHost);
     if (!host || host.id !== selfId) return;
-    const competitors = players.filter((p) => p.role === 'COMPETITOR');
+    const competitors = stableRoomPlayers.filter((p) => p.role === 'COMPETITOR');
     if (!competitors.length) return;
     const allSubmitted = competitors.every((p) => Boolean(p.photoUri));
-    if (allSubmitted && room.status !== 'voting') {
+    if (allSubmitted && roomStatus !== 'voting') {
       updateRoom({ status: 'voting' }).catch(() => {});
     }
-  }, [room?.players, room?.status, selfId, updateRoom]);
+  }, [roomPlayersSig, roomStatus, selfId, updateRoom, stableRoomPlayers]);
 
   const ensurePermission = async (permissionType) => {
     const permissionResponse =

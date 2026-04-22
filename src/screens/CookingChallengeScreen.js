@@ -258,6 +258,14 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const sessionKey = `${cuisineType}|${budget}|${skillLevel}|${cookTimeTargetMinutes}`;
   const isCompetitor = role === 'COMPETITOR';
   const isFocused = useIsFocused();
+  const roomChallengeSig = React.useMemo(
+    () => JSON.stringify(room?.challenge || null),
+    [room?.challenge]
+  );
+  const roomRoastsSig = React.useMemo(
+    () => JSON.stringify(room?.roasts || []),
+    [room?.roasts]
+  );
   const initialTotalSeconds = resolveInitialTotalSeconds(route.params || {});
   const [totalSeconds, setTotalSeconds] = useState(initialTotalSeconds);
   const [prompt, setPrompt] = useState(null);
@@ -290,21 +298,16 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const [toastText, setToastText] = useState('');
   const [selfId, setSelfId] = useState(playerId || null);
   const selfIdLoadedRef = useRef(false);
+  const roomPresent = Boolean(room);
+  const roomPlayer = (room?.players || []).find((p) => p.id === selfId);
+  const isHostPlayer = Boolean(roomPlayer?.isHost);
   const roomRef = useRef(room);
-  const isHostPlayerRef = useRef(isHostPlayer);
   const updateRoomRef = useRef(updateRoom);
+  const isHostPlayerRef = useRef(isHostPlayer);
 
-  useEffect(() => {
-    roomRef.current = room;
-  }, [room]);
-
-  useEffect(() => {
-    isHostPlayerRef.current = isHostPlayer;
-  }, [isHostPlayer]);
-
-  useEffect(() => {
-    updateRoomRef.current = updateRoom;
-  }, [updateRoom]);
+  roomRef.current = room;
+  updateRoomRef.current = updateRoom;
+  isHostPlayerRef.current = isHostPlayer;
 
   useEffect(() => {
     if (selfIdLoadedRef.current || selfId) return undefined;
@@ -317,9 +320,6 @@ export default function CookingChallengeScreen({ route, navigation }) {
       mounted = false;
     };
   }, [getPlayerId]);
-
-  const roomPlayer = (room?.players || []).find((p) => p.id === selfId);
-  const isHostPlayer = Boolean(roomPlayer?.isHost);
 
   // Entrance fade
   useEffect(() => {
@@ -382,7 +382,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [cuisineType, budget, skillLevel, kitchenChallenge, kitchenChallengeKey, sessionKey, setKitchenChallenge, room?.challenge]);
+  }, [cuisineType, budget, skillLevel, kitchenChallenge, kitchenChallengeKey, sessionKey, setKitchenChallenge, roomChallengeSig]);
 
   useEffect(() => {
     setPowerInventory(normalizePowerInventory(route.params?.powerInventory));
@@ -431,7 +431,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
         Animated.timing(toastTranslate, { toValue: -60, duration: 280, useNativeDriver: true }),
       ]),
     ]).start();
-  }, [room?.roasts, role, toastOpacity, toastTranslate]);
+  }, [roomRoastsSig, role, toastOpacity, toastTranslate]);
 
   // Claude: personalized recipe + cook time for this challenge
   useEffect(() => {
@@ -663,7 +663,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
 
   const handleDone = useCallback(async () => {
     clearInterval(intervalRef.current);
-    if (room && isHostPlayer) {
+    if (roomPresent && isHostPlayer) {
       try {
         await updateRoom({ status: 'voting' });
         return;
@@ -707,7 +707,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
     skillLevel,
     avatarUri,
     cookTimeTargetMinutes,
-    room,
+    roomPresent,
     isHostPlayer,
     updateRoom,
   ]);
@@ -757,7 +757,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const handleRoastUpvote = useCallback(
     async (roastId) => {
       if (isCompetitor) return;
-      if (room && gameCode) {
+      if (roomPresent && gameCode) {
         try {
           await upvoteRoast(gameCode, roastId, selfId || 'anon');
           return;
@@ -767,7 +767,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
       }
       upvoteCookingRoast(roastId);
     },
-    [isCompetitor, room, gameCode, upvoteRoast, selfId, upvoteCookingRoast]
+    [isCompetitor, roomPresent, gameCode, upvoteRoast, selfId, upvoteCookingRoast]
   );
 
   const progressPercent = 1 - secondsLeft / Math.max(1, totalSeconds);

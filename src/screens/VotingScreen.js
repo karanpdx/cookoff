@@ -40,6 +40,9 @@ export default function VotingScreen({ route, navigation }) {
 
   const isJudge = role === 'JUDGE';
   const isSpectator = role === 'SPECTATOR';
+  const roomPlayers = room?.players || [];
+  const roomStatus = room?.status || '';
+  const roomVotesSig = React.useMemo(() => JSON.stringify(room?.votes || {}), [room?.votes]);
 
   React.useEffect(() => {
     let mounted = true;
@@ -55,7 +58,7 @@ export default function VotingScreen({ route, navigation }) {
 
   const roomDishes = React.useMemo(
     () =>
-      (room?.players || [])
+      roomPlayers
         .filter((p) => p.photoUri)
         .map((p) => ({
           id: p.id,
@@ -63,30 +66,29 @@ export default function VotingScreen({ route, navigation }) {
           dishName: p.dishName,
           photoUri: p.photoUri,
         })),
-    [room?.players]
+    [roomPlayers]
   );
   const dishList = roomDishes.length ? roomDishes : dishes;
 
   React.useEffect(() => {
-    if (!room || !selfId) return;
-    const players = room.players || [];
-    const host = players.find((p) => p.isHost);
+    if (!selfId || !roomPlayers.length) return;
+    const host = roomPlayers.find((p) => p.isHost);
     if (!host || host.id !== selfId) return;
-    const voters = players.filter((p) => p.role === 'JUDGE' || p.role === 'SPECTATOR');
+    const voters = roomPlayers.filter((p) => p.role === 'JUDGE' || p.role === 'SPECTATOR');
     if (!voters.length) return;
-    const votesObj = room.votes || {};
+    const votesObj = room?.votes || {};
     const allDone = voters.every((v) => Boolean(votesObj[v.id]));
-    if (allDone && room.status !== 'results') {
+    if (allDone && roomStatus !== 'results') {
       updateRoom({ status: 'results' }).catch(() => {});
     }
-  }, [room, selfId, updateRoom]);
+  }, [selfId, roomPlayers, roomVotesSig, roomStatus, updateRoom]);
 
   React.useEffect(() => {
-    if (!room?.status) return;
-    if (room.status === 'results') {
+    if (!roomStatus) return;
+    if (roomStatus === 'results') {
       navigation.replace('ResultsScreen', { gameCode, playerName, playerId: selfId });
     }
-  }, [room?.status, navigation, gameCode, playerName, selfId]);
+  }, [roomStatus, navigation, gameCode, playerName, selfId]);
 
   const setJudgeScore = (dishId, n) => {
     setJudgeRatings((prev) => ({ ...prev, [dishId]: n }));

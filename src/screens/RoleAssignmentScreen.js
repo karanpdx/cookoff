@@ -83,7 +83,12 @@ export default function RoleAssignmentScreen({ route, navigation }) {
     if (!room?.challenge) return '';
     const c = room.challenge;
     return `${c.cuisineType || ''}|${c.budget || ''}|${c.skillLevel || ''}|${c.createdAt || ''}`;
-  }, [room?.challenge]);
+  }, [
+    room?.challenge?.cuisineType,
+    room?.challenge?.budget,
+    room?.challenge?.skillLevel,
+    room?.challenge?.createdAt,
+  ]);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.5)).current;

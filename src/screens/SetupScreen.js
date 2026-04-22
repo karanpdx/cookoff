@@ -223,7 +223,13 @@ export default function SetupScreen({ route, navigation }) {
     if (!room?.challenge) return '';
     const c = room.challenge;
     return `${c.cuisineType || ''}|${c.budget || ''}|${c.skillLevel || ''}|${c.cookTimeTarget || ''}|${c.createdAt || ''}`;
-  }, [room?.challenge]);
+  }, [
+    room?.challenge?.cuisineType,
+    room?.challenge?.budget,
+    room?.challenge?.skillLevel,
+    room?.challenge?.cookTimeTarget,
+    room?.challenge?.createdAt,
+  ]);
 
   React.useEffect(() => {
     if (isHost) return;

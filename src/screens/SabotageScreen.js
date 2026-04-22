@@ -191,6 +191,8 @@ export default function SabotageScreen({ route, navigation }) {
   const { claimSabotageCard, getPlayerId } = useFirebaseRoom();
   const [selfId, setSelfId] = useState(playerId || null);
   const [claimedCards, setClaimedCards] = useState([]);
+  const hasRoom = Boolean(room);
+  const sabotageCardsCount = room?.sabotageCards?.length ?? 0;
   const roomCards = Array.isArray(room?.sabotageCards) && room.sabotageCards.length
     ? room.sabotageCards
     : CARDS.map((c) => ({ ...c, claimedBy: null }));
@@ -208,13 +210,14 @@ export default function SabotageScreen({ route, navigation }) {
   }, [selfId, getPlayerId]);
 
   useEffect(() => {
-    if (!room || (room.sabotageCards || []).length > 0) return;
-    updateRoom({ sabotageCards: roomCards }).catch(() => {});
-  }, [room, roomCards, updateRoom]);
+    if (!hasRoom || sabotageCardsCount > 0) return;
+    const seedCards = CARDS.map((c) => ({ ...c, claimedBy: null }));
+    updateRoom({ sabotageCards: seedCards }).catch(() => {});
+  }, [hasRoom, sabotageCardsCount, updateRoom]);
 
   const handleCardClaimed = useCallback(
     async (card) => {
-      if (!gameCode || !selfId || !room) {
+      if (!gameCode || !selfId || !hasRoom) {
         setClaimedCards((prev) => (prev.some((c) => c.id === card.id) ? prev : [...prev, card]));
         return;
       }
@@ -225,7 +228,7 @@ export default function SabotageScreen({ route, navigation }) {
         // another player won the claim first
       }
     },
-    [claimSabotageCard, gameCode, selfId, room]
+    [claimSabotageCard, gameCode, selfId, hasRoom]
   );
 
   const handleBackToCooking = () => {
