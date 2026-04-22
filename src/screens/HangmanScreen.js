@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PALETTE, CloudBg, ChunkyBtn } from '../components/DesignSystem';
@@ -6,6 +6,7 @@ import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useGameSession } from '../context/GameSessionContext';
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+const FALLBACK_WORDS = ['SAFFRON', 'WASABI', 'PAPRIKA', 'TRUFFLE', 'CARDAMOM', 'GOCHUJANG'];
 
 function extractFoodNoun(line) {
   if (!line) return null;
@@ -16,32 +17,38 @@ function extractFoodNoun(line) {
     .trim();
   if (!cleaned) return null;
   const parts = cleaned.split(/\s+/).filter(Boolean);
-  const keep = parts[parts.length - 1] || parts[0];
-  if (!keep) return null;
+  // Take the longest remaining word (most likely the main food noun)
+  const keep = parts.reduce((a, b) => (b.length > a.length ? b : a), parts[0] || '');
+  if (!keep || keep.length < 3) return null;
   return keep.toUpperCase();
+}
+
+function pickWord(ingredients) {
+  const nouns = (ingredients || []).map(extractFoodNoun).filter((w) => w && w.length >= 3);
+  if (nouns.length) return nouns[Math.floor(Math.random() * nouns.length)];
+  return FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
 }
 
 export default function HangmanScreen({ navigation }) {
   const { sessionRecipe } = useGameSession();
-  const WORD = useMemo(() => {
-    const ingredients = sessionRecipe?.ingredients || [];
-    const nouns = ingredients.map(extractFoodNoun).filter((w) => w && w.length >= 3);
-    if (!nouns.length) return 'TACOS';
-    return nouns[Math.floor(Math.random() * nouns.length)];
-  }, [sessionRecipe?.ingredients]);
+  const [word, setWord] = useState(() => pickWord(sessionRecipe?.ingredients));
   const [guessed, setGuessed] = useState(new Set());
   const [wrong, setWrong] = useState(0);
   const maxWrong = 6;
 
+  useEffect(() => {
+    setWord(pickWord(sessionRecipe?.ingredients));
+  }, [sessionRecipe?.ingredients]);
+
   const display = useMemo(
     () =>
-      WORD.split('')
+      word.split('')
         .map((ch) => (guessed.has(ch) ? ch : '_'))
         .join(' '),
-    [guessed]
+    [guessed, word]
   );
 
-  const won = useMemo(() => WORD.split('').every((ch) => guessed.has(ch)), [guessed]);
+  const won = useMemo(() => word.split('').every((ch) => guessed.has(ch)), [guessed, word]);
   const lost = wrong >= maxWrong;
 
   const pick = useCallback(
@@ -50,9 +57,9 @@ export default function HangmanScreen({ navigation }) {
       const next = new Set(guessed);
       next.add(L);
       setGuessed(next);
-      if (!WORD.includes(L)) setWrong((w) => w + 1);
+      if (!word.includes(L)) setWrong((w) => w + 1);
     },
-    [guessed, won, lost, WORD]
+    [guessed, won, lost, word]
   );
 
   return (
@@ -66,7 +73,7 @@ export default function HangmanScreen({ navigation }) {
           Wrong: {wrong}/{maxWrong}
         </Text>
         {won && <Text style={styles.win}>You saved the dish! 🎉</Text>}
-        {lost && <Text style={styles.lose}>Kitchen disaster! Word was {WORD}</Text>}
+        {lost && <Text style={styles.lose}>Kitchen disaster! Word was {word}</Text>}
         <View style={styles.grid}>
           {LETTERS.map((L) => (
             <TouchableOpacity
@@ -84,6 +91,7 @@ export default function HangmanScreen({ navigation }) {
           shadowColor={PALETTE.espresso}
           color={PALETTE.espresso}
           onPress={() => {
+            setWord(pickWord(sessionRecipe?.ingredients));
             setGuessed(new Set());
             setWrong(0);
           }}

@@ -4,10 +4,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MUTE_KEY = 'cookoff_bg_muted';
 
+/** Resolved at build time; load/decode failures are caught below (see console.warn). */
+const BG_MP3 = require('../../assets/music/bg.mp3');
+
 export function useBackgroundMusic() {
   const soundRef = useRef(null);
+  const loadFailedRef = useRef(false);
   const [isMuted, setIsMuted] = useState(false);
   const [ready, setReady] = useState(false);
+  const [musicAvailable, setMusicAvailable] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -27,8 +32,9 @@ export function useBackgroundMusic() {
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || loadFailedRef.current) return;
     let mounted = true;
+
     (async () => {
       if (!soundRef.current) {
         try {
@@ -37,25 +43,37 @@ export function useBackgroundMusic() {
             playsInSilentModeIOS: true,
             shouldDuckAndroid: true,
           });
-          const { sound } = await Audio.Sound.createAsync(
-            // Placeholder track path; replace this file with your final music asset.
-            require('../../assets/music/bg.mp3'),
-            { isLooping: true, volume: 0.5, shouldPlay: !isMuted }
-          );
+          const { sound } = await Audio.Sound.createAsync(BG_MP3, {
+            isLooping: true,
+            volume: 0.5,
+            shouldPlay: !isMuted,
+          });
           if (!mounted) {
             await sound.unloadAsync();
             return;
           }
           soundRef.current = sound;
+          setMusicAvailable(true);
         } catch {
-          return;
+          console.warn('bg music file missing — skipping');
+          loadFailedRef.current = true;
+          if (mounted) setMusicAvailable(false);
         }
       } else if (isMuted) {
-        await soundRef.current.pauseAsync();
+        try {
+          await soundRef.current.pauseAsync();
+        } catch {
+          /* ignore */
+        }
       } else {
-        await soundRef.current.playAsync();
+        try {
+          await soundRef.current.playAsync();
+        } catch {
+          /* ignore */
+        }
       }
     })();
+
     return () => {
       mounted = false;
     };
@@ -71,6 +89,7 @@ export function useBackgroundMusic() {
   }, []);
 
   const toggleMute = useCallback(async () => {
+    if (loadFailedRef.current || !soundRef.current) return;
     setIsMuted((m) => {
       const next = !m;
       AsyncStorage.setItem(MUTE_KEY, next ? '1' : '0');
@@ -78,5 +97,5 @@ export function useBackgroundMusic() {
     });
   }, []);
 
-  return { isMuted, toggleMute };
+  return { isMuted, toggleMute, musicAvailable };
 }

@@ -11,6 +11,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { PALETTE, ChunkyBtn } from '../components/DesignSystem';
 import { ScreenBackButton } from '../components/ScreenBackButton';
+import { useRoomSync } from '../hooks/useRoomSync';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 
 const CARDS = [
   {
@@ -47,7 +49,7 @@ const STARS = Array.from({ length: 30 }, (_, i) => ({
   top: (i * 53) % 100,
 }));
 
-function SabotageCard({ card, index, onClaimed }) {
+function SabotageCard({ card, index, onClaimed, externallyClaimed }) {
   const [count, setCount] = useState(3);
   const [revealed, setRevealed] = useState(false);
   const [claimed, setClaimed] = useState(false);
@@ -93,6 +95,13 @@ function SabotageCard({ card, index, onClaimed }) {
       clearTimeout(outer);
     };
   }, [index, countdownScale, revealOpacity]);
+
+  useEffect(() => {
+    if (!externallyClaimed || claimed) return;
+    setClaimed(true);
+    claimedOverlayOpacity.setValue(1);
+    claimedScale.setValue(1);
+  }, [externallyClaimed, claimed, claimedOverlayOpacity, claimedScale]);
 
   const handlePress = useCallback(() => {
     if (!revealed || claimed) return;
@@ -177,11 +186,47 @@ function mergePowerInventory(existing, claimedList) {
 
 export default function SabotageScreen({ route, navigation }) {
   const cookingParams = route.params || {};
+  const { gameCode, playerId } = cookingParams;
+  const { room, updateRoom } = useRoomSync(gameCode);
+  const { claimSabotageCard, getPlayerId } = useFirebaseRoom();
+  const [selfId, setSelfId] = useState(playerId || null);
   const [claimedCards, setClaimedCards] = useState([]);
+  const roomCards = Array.isArray(room?.sabotageCards) && room.sabotageCards.length
+    ? room.sabotageCards
+    : CARDS.map((c) => ({ ...c, claimedBy: null }));
 
-  const handleCardClaimed = useCallback((card) => {
-    setClaimedCards((prev) => (prev.some((c) => c.id === card.id) ? prev : [...prev, card]));
-  }, []);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
+
+  useEffect(() => {
+    if (!room || (room.sabotageCards || []).length > 0) return;
+    updateRoom({ sabotageCards: roomCards }).catch(() => {});
+  }, [room, roomCards, updateRoom]);
+
+  const handleCardClaimed = useCallback(
+    async (card) => {
+      if (!gameCode || !selfId || !room) {
+        setClaimedCards((prev) => (prev.some((c) => c.id === card.id) ? prev : [...prev, card]));
+        return;
+      }
+      try {
+        await claimSabotageCard(gameCode, card.id, selfId);
+        setClaimedCards((prev) => (prev.some((c) => c.id === card.id) ? prev : [...prev, card]));
+      } catch {
+        // another player won the claim first
+      }
+    },
+    [claimSabotageCard, gameCode, selfId, room]
+  );
 
   const handleBackToCooking = () => {
     const merged = mergePowerInventory(cookingParams.powerInventory, claimedCards);
@@ -222,12 +267,13 @@ export default function SabotageScreen({ route, navigation }) {
 
           {/* Cards grid */}
           <View style={styles.cardsGrid}>
-            {CARDS.map((card, index) => (
+            {roomCards.map((card, index) => (
               <SabotageCard
                 key={card.id}
                 card={card}
                 index={index}
                 onClaimed={handleCardClaimed}
+                externallyClaimed={Boolean(card.claimedBy)}
               />
             ))}
           </View>

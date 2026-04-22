@@ -11,6 +11,7 @@ export function GameSessionProvider({ children }) {
   const [kitchenChallengeKey, setKitchenChallengeKey] = useState(null);
   const [sessionRecipe, setSessionRecipe] = useState(null);
   const [spectatorEngagementPoints, setSpectatorEngagementPoints] = useState(170);
+  const [avatarUri, setAvatarUri] = useState(null);
 
   const setKitchenChallenge = useCallback((challenge, key) => {
     setKitchenChallengeState(challenge);
@@ -52,6 +53,7 @@ export function GameSessionProvider({ children }) {
     setKitchenChallengeKey(null);
     setSessionRecipe(null);
     setSpectatorEngagementPoints(170);
+    setAvatarUri(null);
   }, []);
 
   const value = useMemo(
@@ -67,6 +69,8 @@ export function GameSessionProvider({ children }) {
       setSessionRecipe,
       spectatorEngagementPoints,
       addSpectatorEngagementPoints,
+      avatarUri,
+      setAvatarUri,
       addDishSubmission,
       sendJudgeRoastAnonymous,
       upvoteCookingRoast,
@@ -83,6 +87,7 @@ export function GameSessionProvider({ children }) {
       sessionRecipe,
       spectatorEngagementPoints,
       addSpectatorEngagementPoints,
+      avatarUri,
       addDishSubmission,
       sendJudgeRoastAnonymous,
       upvoteCookingRoast,

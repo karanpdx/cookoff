@@ -4,7 +4,7 @@ import Svg, { Path } from 'react-native-svg';
 
 const CLOUD_STROKE = '#2B1810';
 const CLOUD_FILL = '#FFFFFF';
-const CLOUD_COUNT = 6;
+const CLOUD_COUNT = 4;
 
 function BumpyCloud({ width }) {
   const height = width * 0.52;
@@ -31,12 +31,17 @@ function rand(min, max) {
 export default function AnimatedClouds({ style }) {
   const screen = Dimensions.get('window');
   const clouds = useMemo(() => {
+    const topBand = screen.height * 0.35;
     return Array.from({ length: CLOUD_COUNT }).map((_, i) => {
-      const width = rand(90, 170);
-      const top = rand(20, Math.max(24, screen.height - 150));
-      const baseX = rand(-screen.width, screen.width);
+      const width = rand(90, 150);
+      const cloudHeight = width * 0.52;
+      const topMax = Math.max(12, topBand - cloudHeight - 8);
+      const top = rand(8, topMax);
+      const span = screen.width + width + 160;
+      const slot = span / CLOUD_COUNT;
+      const baseX = -width - 40 + i * slot + rand(0, slot * 0.45);
       const x = new Animated.Value(baseX);
-      const duration = rand(40000, 60000);
+      const duration = rand(42000, 68000);
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(x, {
@@ -45,14 +50,14 @@ export default function AnimatedClouds({ style }) {
             useNativeDriver: true,
           }),
           Animated.timing(x, {
-            toValue: screen.width + rand(20, 180),
+            toValue: screen.width + rand(40, 200),
             duration: 20,
             useNativeDriver: true,
           }),
         ])
       );
       loop.start();
-      return { key: `cloud-${i}`, width, top, x, opacity: rand(0.68, 0.92) };
+      return { key: `cloud-${i}`, width, top, x, opacity: 0.5 };
     });
   }, [screen.height, screen.width]);
 
@@ -61,6 +66,7 @@ export default function AnimatedClouds({ style }) {
       {clouds.map((c) => (
         <Animated.View
           key={c.key}
+          pointerEvents="none"
           style={[
             styles.cloudWrap,
             {
@@ -80,7 +86,7 @@ export default function AnimatedClouds({ style }) {
 const styles = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 1,
+    zIndex: -1,
   },
   cloudWrap: {
     position: 'absolute',

@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -56,6 +57,7 @@ export function useFirebaseRoom() {
       }
     }
     if (!gameCode) throw new Error('Unable to create room');
+    console.log('[createRoom] generated gameCode:', gameCode);
     const hostPlayer = {
       id: hostId,
       name: playerName || 'Host',
@@ -81,21 +83,26 @@ export function useFirebaseRoom() {
       bets: {},
       createdAt: Date.now(),
     });
+    console.log('[createRoom] wrote room doc id + field gameCode:', gameCode);
     return gameCode;
   }, []);
 
   const joinRoom = useCallback(async (gameCode, playerName, avatarUri) => {
     const code = String(gameCode || '').trim();
     if (!code) throw new Error('Room not found');
+    console.log('[joinRoom] user entered gameCode:', code);
     const playerId = await getOrCreatePlayerId();
     let roomRef = doc(db, 'rooms', code);
     let roomSnap = await getDoc(roomRef);
+    console.log('[joinRoom] doc lookup by id exists:', roomSnap.exists(), 'docId:', code);
+    const q = query(collection(db, 'rooms'), where('gameCode', '==', code));
+    const byField = await getDocs(q);
+    console.log('[joinRoom] query by gameCode matches:', byField.size, 'for code:', code);
     if (!roomSnap.exists()) {
-      const q = query(collection(db, 'rooms'), where('gameCode', '==', code));
-      const alt = await getDocs(q);
-      if (alt.empty) throw new Error('Room not found');
-      roomRef = alt.docs[0].ref;
-      roomSnap = alt.docs[0];
+      if (byField.empty) throw new Error('Room not found');
+      roomRef = byField.docs[0].ref;
+      roomSnap = byField.docs[0];
+      console.log('[joinRoom] using queried room doc id:', roomRef.id, 'for code:', code);
     }
     const room = roomSnap.data();
     const players = Array.isArray(room.players) ? room.players : [];
@@ -113,8 +120,10 @@ export function useFirebaseRoom() {
         isHost: false,
       };
       await updateDoc(roomRef, { players: [...players, nextPlayer] });
+      console.log('[joinRoom] added player to gameCode:', room.gameCode || code, 'docId:', roomRef.id);
       return { id: code, ...room, players: [...players, nextPlayer] };
     }
+    console.log('[joinRoom] existing player joined gameCode:', room.gameCode || code, 'docId:', roomRef.id);
     return { id: code, ...room };
   }, []);
 
@@ -225,6 +234,32 @@ export function useFirebaseRoom() {
     });
   }, []);
 
+  const awardRoastWinnerPoints = useCallback(async (gameCode, roastId) => {
+    const code = String(gameCode || '').trim();
+    if (!code || !roastId) return;
+    const roomRef = doc(db, 'rooms', code);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(roomRef);
+      if (!snap.exists()) return;
+      const room = snap.data();
+      const roasts = Array.isArray(room.roasts) ? room.roasts : [];
+      const winner = roasts.find((r) => r.id === roastId);
+      if (!winner?.by) return;
+      if (room.roastWinnerAwardedFor === roastId) return;
+      const bonus = 50 + (Number(winner.votes) || 0) * 10;
+      const players = Array.isArray(room.players) ? room.players : [];
+      const nextPlayers = players.map((p) =>
+        p.id === winner.by
+          ? { ...p, engagementPoints: Math.max(0, (Number(p.engagementPoints) || 0) + bonus) }
+          : p
+      );
+      tx.update(roomRef, {
+        players: nextPlayers,
+        roastWinnerAwardedFor: roastId,
+      });
+    });
+  }, []);
+
   const claimSabotageCard = useCallback(async (gameCode, cardId, playerId) => {
     const code = String(gameCode || '').trim();
     if (!code) throw new Error('Room not found');
@@ -253,6 +288,12 @@ export function useFirebaseRoom() {
     return { id: d.id, ...d.data() };
   }, []);
 
+  const deleteRoom = useCallback(async (gameCode) => {
+    const code = String(gameCode || '').trim();
+    if (!code) return;
+    await deleteDoc(doc(db, 'rooms', code));
+  }, []);
+
   return useMemo(
     () => ({
       getPlayerId,
@@ -264,8 +305,10 @@ export function useFirebaseRoom() {
       submitJudgeScore,
       addRoast,
       upvoteRoast,
+      awardRoastWinnerPoints,
       claimSabotageCard,
       findRoomByCode,
+      deleteRoom,
     }),
     [
       getPlayerId,
@@ -277,8 +320,10 @@ export function useFirebaseRoom() {
       submitJudgeScore,
       addRoast,
       upvoteRoast,
+      awardRoastWinnerPoints,
       claimSabotageCard,
       findRoomByCode,
+      deleteRoom,
     ]
   );
 }

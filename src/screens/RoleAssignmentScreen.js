@@ -79,6 +79,11 @@ export default function RoleAssignmentScreen({ route, navigation }) {
   const [revealed, setRevealed] = useState(false);
   const [challengeLoading, setChallengeLoading] = useState(true);
   const sessionKey = `${cuisineType}|${budget}|${skillLevel}|${cookTimeTarget}`;
+  const roomChallengeSig = React.useMemo(() => {
+    if (!room?.challenge) return '';
+    const c = room.challenge;
+    return `${c.cuisineType || ''}|${c.budget || ''}|${c.skillLevel || ''}|${c.createdAt || ''}`;
+  }, [room?.challenge]);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.5)).current;
@@ -118,6 +123,10 @@ export default function RoleAssignmentScreen({ route, navigation }) {
       mounted = false;
     };
   }, [selfId, getPlayerId]);
+
+  useEffect(() => {
+    setRoleAssignedOnce(false);
+  }, [gameCode]);
 
   useEffect(() => {
     if (!isHost || roleAssignedOnce || !room?.players?.length) return;
@@ -181,7 +190,7 @@ export default function RoleAssignmentScreen({ route, navigation }) {
     kitchenChallenge,
     kitchenChallengeKey,
     setKitchenChallenge,
-    room?.challenge,
+    roomChallengeSig,
   ]);
 
   useEffect(() => {

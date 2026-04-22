@@ -13,6 +13,8 @@ import {
 import { ScreenBackButton } from '../components/ScreenBackButton';
 import { ChallengeHeaderCompact } from '../components/ChallengeCards';
 import { useGameSession } from '../context/GameSessionContext';
+import { useRoomSync } from '../hooks/useRoomSync';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 
 const SABOTAGE_COST = 50;
 const DOUBLE_SABOTAGE_UNLOCK = 250;
@@ -26,7 +28,9 @@ const SABOTAGE_CARDS = [
 ];
 
 export default function SpectatorScreen({ route, navigation }) {
-  const { playerName, gameCode, isHost, cuisineType, budget, skillLevel, avatarUri } = route.params || {};
+  const { playerName, gameCode, isHost, cuisineType, budget, skillLevel, avatarUri, playerId } = route.params || {};
+  const { room } = useRoomSync(gameCode);
+  const { getPlayerId } = useFirebaseRoom();
   const {
     dishes,
     kitchenChallenge,
@@ -34,7 +38,20 @@ export default function SpectatorScreen({ route, navigation }) {
     spectatorEngagementPoints,
     addSpectatorEngagementPoints,
   } = useGameSession();
+  const [selfId, setSelfId] = useState(playerId || null);
   const [sponsoredThisRound, setSponsoredThisRound] = useState({});
+
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
 
   const competitors = useMemo(
     () => [
@@ -45,11 +62,13 @@ export default function SpectatorScreen({ route, navigation }) {
     [dishes.length]
   );
   const isCookingDone = dishes.length > 0;
-  const unlockProgress = Math.min(1, spectatorEngagementPoints / DOUBLE_SABOTAGE_UNLOCK);
+  const syncedPoints =
+    (room?.players || []).find((p) => p.id === selfId)?.engagementPoints ?? spectatorEngagementPoints;
+  const unlockProgress = Math.min(1, syncedPoints / DOUBLE_SABOTAGE_UNLOCK);
 
   const handleSponsorSabotage = (chef) => {
     if (sponsoredThisRound[chef.id]) return;
-    if (spectatorEngagementPoints < SABOTAGE_COST) {
+    if (syncedPoints < SABOTAGE_COST) {
       Alert.alert('Not enough points', `You need ${SABOTAGE_COST} engagement points to sponsor sabotage.`);
       return;
     }
@@ -83,15 +102,15 @@ export default function SpectatorScreen({ route, navigation }) {
         <View style={styles.pointsCard}>
           <View style={styles.pointsRow}>
             <Text style={styles.pointsLabel}>Engagement points</Text>
-            <Text style={styles.pointsValue}>{spectatorEngagementPoints}</Text>
+            <Text style={styles.pointsValue}>{syncedPoints}</Text>
           </View>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${unlockProgress * 100}%` }]} />
           </View>
           <Text style={styles.progressHint}>
-            {spectatorEngagementPoints >= DOUBLE_SABOTAGE_UNLOCK
+            {syncedPoints >= DOUBLE_SABOTAGE_UNLOCK
               ? 'Double Sabotage unlocked! 🃏🃏'
-              : `${Math.max(0, DOUBLE_SABOTAGE_UNLOCK - spectatorEngagementPoints)} pts to Double Sabotage unlock`}
+              : `${Math.max(0, DOUBLE_SABOTAGE_UNLOCK - syncedPoints)} pts to Double Sabotage unlock`}
           </Text>
         </View>
 
@@ -173,7 +192,7 @@ export default function SpectatorScreen({ route, navigation }) {
           shadowColor={PALETTE.espresso}
           color={PALETTE.espresso}
           disabled={isCookingDone}
-          onPress={() => navigation.navigate('RoastSendModal')}
+          onPress={() => navigation.navigate('RoastSendModal', route.params)}
           style={styles.btn}
         >
           🔥 SEND ROAST

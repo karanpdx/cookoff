@@ -153,6 +153,7 @@ export default function SetupScreen({ route, navigation }) {
   const { room, updateRoom } = useRoomSync(gameCode);
   const { getPlayerId } = useFirebaseRoom();
   const shouldWaitForHost = !isHost && Boolean(room);
+  const redirectedToRoleRef = React.useRef(false);
   const [cuisineType, setCuisineType] = useState('');
   const [cuisineQuery, setCuisineQuery] = useState('');
   const [modifiers, setModifiers] = useState([]);
@@ -218,9 +219,17 @@ export default function SetupScreen({ route, navigation }) {
     });
   };
 
+  const roomChallengeKey = useMemo(() => {
+    if (!room?.challenge) return '';
+    const c = room.challenge;
+    return `${c.cuisineType || ''}|${c.budget || ''}|${c.skillLevel || ''}|${c.cookTimeTarget || ''}|${c.createdAt || ''}`;
+  }, [room?.challenge]);
+
   React.useEffect(() => {
     if (isHost) return;
-    if (!room?.challenge) return;
+    const challenge = room?.challenge;
+    if (!challenge || redirectedToRoleRef.current) return;
+    redirectedToRoleRef.current = true;
     (async () => {
       const me = playerId || (await getPlayerId());
       navigation.replace('RoleAssignment', {
@@ -229,14 +238,14 @@ export default function SetupScreen({ route, navigation }) {
         isHost: false,
         avatarUri,
         playerId: me,
-        cuisineType: room.challenge.cuisineType,
-        modifiers: room.challenge.modifiers || [],
-        budget: room.challenge.budget,
-        cookTimeTarget: room.challenge.cookTimeTarget || 20,
-        skillLevel: room.challenge.skillLevel || 'Beginner',
+        cuisineType: challenge.cuisineType,
+        modifiers: challenge.modifiers || [],
+        budget: challenge.budget,
+        cookTimeTarget: challenge.cookTimeTarget || 20,
+        skillLevel: challenge.skillLevel || 'Beginner',
       });
     })();
-  }, [isHost, room?.challenge, playerName, gameCode, avatarUri, playerId, getPlayerId, navigation]);
+  }, [isHost, roomChallengeKey, playerName, gameCode, avatarUri, playerId, getPlayerId, navigation]);
 
   return (
     <SafeAreaView style={styles.safe}>

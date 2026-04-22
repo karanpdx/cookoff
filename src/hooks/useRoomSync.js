@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   arrayRemove,
   arrayUnion,
@@ -9,28 +9,49 @@ import {
 import { db } from '../firebase';
 
 export function useRoomSync(gameCode) {
-  const code = (gameCode || '').trim();
+  const code = useMemo(() => (gameCode || '').trim(), [gameCode]);
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(Boolean(code));
   const [error, setError] = useState(null);
+  const activeCodeRef = useRef('');
+  const unsubscribeRef = useRef(null);
+  const prevDataStr = useRef(null);
+  const codeRef = useRef(code);
+  const roomDocRef = useRef(null);
 
   useEffect(() => {
+    codeRef.current = code;
+    roomDocRef.current = code ? doc(db, 'rooms', code) : null;
+  }, [code]);
+
+  useEffect(() => {
+    if (activeCodeRef.current === code) return undefined;
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
+    activeCodeRef.current = code;
     if (!code) {
       setRoom(null);
       setLoading(false);
       setError(null);
+      prevDataStr.current = null;
       return undefined;
     }
-    const ref = doc(db, 'rooms', code);
+    const ref = roomDocRef.current || doc(db, 'rooms', code);
     setLoading(true);
     const unsub = onSnapshot(
       ref,
       (snap) => {
-        if (!snap.exists()) {
-          setRoom(null);
-        } else {
-          setRoom({ id: snap.id, ...snap.data() });
+        const next = !snap.exists() ? null : { id: snap.id, ...snap.data() };
+        const dataStr = JSON.stringify(next);
+        if (prevDataStr.current === dataStr) {
+          setLoading(false);
+          setError(null);
+          return;
         }
+        prevDataStr.current = dataStr;
+        setRoom(next);
         setLoading(false);
         setError(null);
       },
@@ -39,31 +60,41 @@ export function useRoomSync(gameCode) {
         setLoading(false);
       }
     );
-    return unsub;
+    unsubscribeRef.current = unsub;
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+      activeCodeRef.current = '';
+    };
   }, [code]);
 
   const updateRoom = useCallback(
     async (data) => {
-      if (!code) throw new Error('Missing gameCode');
-      await updateDoc(doc(db, 'rooms', code), data);
+      const roomDoc = roomDocRef.current;
+      if (!roomDoc || !codeRef.current) throw new Error('Missing gameCode');
+      await updateDoc(roomDoc, data);
     },
-    [code]
+    []
   );
 
   const addToArray = useCallback(
     async (field, value) => {
-      if (!code) throw new Error('Missing gameCode');
-      await updateDoc(doc(db, 'rooms', code), { [field]: arrayUnion(value) });
+      const roomDoc = roomDocRef.current;
+      if (!roomDoc || !codeRef.current) throw new Error('Missing gameCode');
+      await updateDoc(roomDoc, { [field]: arrayUnion(value) });
     },
-    [code]
+    []
   );
 
   const removeFromArray = useCallback(
     async (field, value) => {
-      if (!code) throw new Error('Missing gameCode');
-      await updateDoc(doc(db, 'rooms', code), { [field]: arrayRemove(value) });
+      const roomDoc = roomDocRef.current;
+      if (!roomDoc || !codeRef.current) throw new Error('Missing gameCode');
+      await updateDoc(roomDoc, { [field]: arrayRemove(value) });
     },
-    [code]
+    []
   );
 
   return useMemo(

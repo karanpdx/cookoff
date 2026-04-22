@@ -10,9 +10,10 @@ import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 export default function FunniestRoastVoteScreen({ route, navigation }) {
   const { playerName, role, gameCode, playerId } = route.params || {};
   const { room } = useRoomSync(gameCode);
-  const { getPlayerId, upvoteRoast } = useFirebaseRoom();
+  const { getPlayerId, upvoteRoast, awardRoastWinnerPoints } = useFirebaseRoom();
   const { cookingRoasts, upvoteCookingRoast } = useGameSession();
   const [selfId, setSelfId] = React.useState(playerId || null);
+  const [awarding, setAwarding] = React.useState(false);
   const canUpvote = role !== 'COMPETITOR';
 
   React.useEffect(() => {
@@ -43,6 +44,21 @@ export default function FunniestRoastVoteScreen({ route, navigation }) {
   const roastSource = Array.isArray(room?.roasts) && room.roasts.length ? room.roasts : cookingRoasts;
   const sorted = [...roastSource].sort((a, b) => b.votes - a.votes);
   const top = sorted[0];
+  const isHost = Boolean((room?.players || []).find((p) => p.id === selfId)?.isHost);
+
+  const finishRound = async () => {
+    if (room && top?.id && isHost && !awarding) {
+      try {
+        setAwarding(true);
+        await awardRoastWinnerPoints(gameCode, top.id);
+      } catch {
+        // fallback to navigation
+      } finally {
+        setAwarding(false);
+      }
+    }
+    navigation.navigate('ResultsScreen', { playerName, gameCode, playerId: selfId });
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -94,9 +110,10 @@ export default function FunniestRoastVoteScreen({ route, navigation }) {
           bg={PALETTE.yellow}
           shadowColor={PALETTE.espresso}
           color={PALETTE.espresso}
-          onPress={() => navigation.navigate('ResultsScreen', { playerName })}
+          onPress={finishRound}
+          disabled={awarding}
         >
-          See final results →
+          {awarding ? 'Finalizing winner…' : 'See final results →'}
         </ChunkyBtn>
       </ScrollView>
     </SafeAreaView>

@@ -12,6 +12,7 @@ import {
 } from '@expo-google-fonts/fredoka';
 
 import { GameSessionProvider } from './src/context/GameSessionContext';
+import CharacterCreatorScreen from './src/screens/CharacterCreatorScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import SetupScreen from './src/screens/SetupScreen';
 import RoleAssignmentScreen from './src/screens/RoleAssignmentScreen';
@@ -65,13 +66,14 @@ export default function App() {
         <NavigationContainer>
           <StatusBar style="dark" />
           <Stack.Navigator
-            initialRouteName="Home"
+            initialRouteName="CharacterCreator"
             screenOptions={{
               headerShown: false,
               animation: 'slide_from_right',
               contentStyle: { backgroundColor: '#87CEEB' },
             }}
           >
+            <Stack.Screen name="CharacterCreator" component={CharacterCreatorScreen} />
             <Stack.Screen name="Home" component={HomeScreen} />
             <Stack.Screen name="Setup" component={SetupScreen} />
             <Stack.Screen name="RoleAssignment" component={RoleAssignmentScreen} />

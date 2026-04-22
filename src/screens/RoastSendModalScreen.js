@@ -13,19 +13,53 @@ import {
 } from 'react-native';
 import { PALETTE, ChunkyBtn } from '../components/DesignSystem';
 import { useGameSession } from '../context/GameSessionContext';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
+import { useRoomSync } from '../hooks/useRoomSync';
 
 const TARGETS = ['Alex', 'Sam', 'Jess'];
 
-export default function RoastSendModalScreen({ navigation }) {
+export default function RoastSendModalScreen({ navigation, route }) {
+  const { gameCode, playerId } = route.params || {};
   const [text, setText] = useState('');
   const [target, setTarget] = useState(TARGETS[0]);
   const { sendJudgeRoastAnonymous } = useGameSession();
+  const { addRoast, getPlayerId } = useFirebaseRoom();
+  const { room } = useRoomSync(gameCode);
+  const [selfId, setSelfId] = useState(playerId || null);
   const accessoryID = 'roastKeyboardDone';
 
-  const send = () => {
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
+
+  const send = async () => {
     const t = text.trim();
     if (!t) return;
-    sendJudgeRoastAnonymous(`[→ ${target}] ${t}`);
+    const roastText = `[→ ${target}] ${t}`;
+    if (room && gameCode) {
+      try {
+        await addRoast(gameCode, {
+          id: `roast-${Date.now()}`,
+          text: roastText,
+          votes: 0,
+          target,
+          by: selfId || 'anon',
+          at: Date.now(),
+        });
+      } catch {
+        sendJudgeRoastAnonymous(roastText);
+      }
+    } else {
+      sendJudgeRoastAnonymous(roastText);
+    }
     setText('');
     Keyboard.dismiss();
     navigation.goBack();

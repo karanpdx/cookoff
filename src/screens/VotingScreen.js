@@ -113,7 +113,7 @@ export default function VotingScreen({ route, navigation }) {
       }
     }
     if (cookingRoasts.length > 0) {
-      navigation.navigate('FunniestRoastVote', { role, playerName });
+      navigation.navigate('FunniestRoastVote', { role, playerName, gameCode, playerId: selfId });
     } else {
       navigation.navigate('ResultsScreen', { playerName });
     }

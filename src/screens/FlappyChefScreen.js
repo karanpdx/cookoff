@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PALETTE, CloudBg, ChunkyBtn } from '../components/DesignSystem';
 import { ScreenBackButton } from '../components/ScreenBackButton';
@@ -30,7 +30,8 @@ function hitBottomY(y) {
 }
 
 export default function FlappyChefScreen({ navigation, route }) {
-  const { addSpectatorEngagementPoints } = useGameSession();
+  const { addSpectatorEngagementPoints, avatarUri: contextAvatar } = useGameSession();
+  const avatarUri = route.params?.avatarUri || contextAvatar;
   const [area, setArea] = useState({ width: 300, height: 460 });
   const [birdY, setBirdY] = useState(200);
   const [pipes, setPipes] = useState([]);
@@ -201,7 +202,14 @@ export default function FlappyChefScreen({ navigation, route }) {
               </View>
             </View>
           ))}
-          <Text style={[styles.chef, { left: BIRD_X, top: birdY }]}>🎩</Text>
+          {avatarUri ? (
+            <Image
+              source={{ uri: avatarUri }}
+              style={[styles.chefAvatar, { left: BIRD_X, top: birdY }]}
+            />
+          ) : (
+            <Text style={[styles.chef, { left: BIRD_X, top: birdY }]}>👨‍🍳</Text>
+          )}
           {!gameOver && <Text style={styles.hint}>Tap to flap through utensil pipes!</Text>}
           {gameOver && (
             <View style={styles.over}>
@@ -258,6 +266,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   chef: { position: 'absolute', fontSize: 34, zIndex: 3 },
+  chefAvatar: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: PALETTE.espresso,
+    zIndex: 3,
+  },
   pipe: {
     position: 'absolute',
     backgroundColor: PALETTE.creamEdge,

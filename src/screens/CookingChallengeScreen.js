@@ -283,20 +283,40 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const toastTranslate = useRef(new Animated.Value(-100)).current;
   const lastRoastSeqRef = useRef(0);
   const lastRoomRoastLenRef = useRef(0);
+  const prevChallengeRef = useRef(null);
+  const prevRecipeRef = useRef(null);
+  const prevStatusRef = useRef(null);
+  const recipeLoadedRef = useRef(false);
   const [toastText, setToastText] = useState('');
   const [selfId, setSelfId] = useState(playerId || null);
+  const selfIdLoadedRef = useRef(false);
+  const roomRef = useRef(room);
+  const isHostPlayerRef = useRef(isHostPlayer);
+  const updateRoomRef = useRef(updateRoom);
 
   useEffect(() => {
+    roomRef.current = room;
+  }, [room]);
+
+  useEffect(() => {
+    isHostPlayerRef.current = isHostPlayer;
+  }, [isHostPlayer]);
+
+  useEffect(() => {
+    updateRoomRef.current = updateRoom;
+  }, [updateRoom]);
+
+  useEffect(() => {
+    if (selfIdLoadedRef.current || selfId) return undefined;
+    selfIdLoadedRef.current = true;
     let mounted = true;
-    (async () => {
-      if (selfId) return;
-      const id = await getPlayerId();
+    getPlayerId().then((id) => {
       if (mounted) setSelfId(id);
-    })();
+    });
     return () => {
       mounted = false;
     };
-  }, [selfId, getPlayerId]);
+  }, [getPlayerId]);
 
   const roomPlayer = (room?.players || []).find((p) => p.id === selfId);
   const isHostPlayer = Boolean(roomPlayer?.isHost);
@@ -314,6 +334,8 @@ export default function CookingChallengeScreen({ route, navigation }) {
     let cancelled = false;
     const roomChallenge = room?.challenge;
     if (roomChallenge?.cuisineType) {
+      if (prevChallengeRef.current === roomChallenge) return () => {};
+      prevChallengeRef.current = roomChallenge;
       setPrompt({
         emoji: '🍳',
         title: roomChallenge.cuisineType,
@@ -360,16 +382,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [
-    cuisineType,
-    budget,
-    skillLevel,
-    kitchenChallenge,
-    kitchenChallengeKey,
-    sessionKey,
-    setKitchenChallenge,
-    room?.challenge,
-  ]);
+  }, [cuisineType, budget, skillLevel, kitchenChallenge, kitchenChallengeKey, sessionKey, setKitchenChallenge, room?.challenge]);
 
   useEffect(() => {
     setPowerInventory(normalizePowerInventory(route.params?.powerInventory));
@@ -422,9 +435,17 @@ export default function CookingChallengeScreen({ route, navigation }) {
 
   // Claude: personalized recipe + cook time for this challenge
   useEffect(() => {
-    if (!prompt?.title) return;
-    if (room?.recipe) {
-      const remote = room.recipe;
+    if (recipeLoadedRef.current) return;
+    recipeLoadedRef.current = true;
+    if (!prompt?.title) {
+      recipeLoadedRef.current = false;
+      return;
+    }
+    const roomValue = roomRef.current;
+    if (roomValue?.recipe) {
+      if (prevRecipeRef.current === roomValue.recipe) return;
+      prevRecipeRef.current = roomValue.recipe;
+      const remote = roomValue.recipe;
       const computedSeconds = (Number(remote.cookTime) || 20) * 60;
       setTotalSeconds(computedSeconds);
       if (typeof route.params?.secondsLeft !== 'number') {
@@ -437,7 +458,10 @@ export default function CookingChallengeScreen({ route, navigation }) {
       if (isCompetitor) setIsRunning(true);
       return;
     }
-    if (room && !isHostPlayer) return;
+    if (roomValue && !isHostPlayerRef.current) {
+      recipeLoadedRef.current = false;
+      return;
+    }
     let cancelled = false;
 
     const callClaude = async (retry = false) => {
@@ -503,9 +527,9 @@ export default function CookingChallengeScreen({ route, navigation }) {
             ...(estimatedCost != null ? { estimatedCost } : {}),
           };
           setSessionRecipe(nextRecipe);
-          if (room) {
+          if (roomRef.current) {
             try {
-              await updateRoom({ recipe: nextRecipe });
+              await updateRoomRef.current({ recipe: nextRecipe });
             } catch {
               // keep local fallback
             }
@@ -570,14 +594,12 @@ export default function CookingChallengeScreen({ route, navigation }) {
     initialTotalSeconds,
     isCompetitor,
     setSessionRecipe,
-    room?.recipe,
-    room,
-    isHostPlayer,
-    updateRoom,
   ]);
 
   useEffect(() => {
     if (!room?.status) return;
+    if (prevStatusRef.current === room.status) return;
+    prevStatusRef.current = room.status;
     if (room.status === 'voting') {
       navigation.replace('VotingScreen', {
         playerName,

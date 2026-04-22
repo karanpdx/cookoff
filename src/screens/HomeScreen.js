@@ -34,7 +34,7 @@ export default function HomeScreen({ route, navigation }) {
   const { avatarUri } = route.params || {};
   const { isMuted, toggleMute, musicAvailable } = useBackgroundMusic();
   const { setAvatarUri } = useGameSession();
-  const { createRoom, joinRoom, getPlayerId, findRoomByCode } = useFirebaseRoom();
+  const { createRoom, joinRoom, getPlayerId, findRoomByCode, deleteRoom } = useFirebaseRoom();
 
   React.useEffect(() => {
     if (avatarUri) setAvatarUri(avatarUri);
@@ -46,6 +46,11 @@ export default function HomeScreen({ route, navigation }) {
   const [busy, setBusy] = useState(false);
   const hiddenInputRef = useRef(null);
   const { room: liveRoom } = useRoomSync(createdGameCode);
+
+  React.useEffect(() => {
+    if (!isCreating || !createdGameCode) return;
+    console.log('[HomeScreen] showing code in waiting UI:', createdGameCode);
+  }, [isCreating, createdGameCode]);
 
   const resolvedName = playerName.trim() || 'Player';
 
@@ -59,6 +64,7 @@ export default function HomeScreen({ route, navigation }) {
     setBusy(true);
     try {
       const gameCode = await createRoom(resolvedName, avatarUri);
+      console.log('[HomeScreen] createRoom returned gameCode:', gameCode);
       setCreatedGameCode(gameCode);
       setIsCreating(true);
     } catch {
@@ -76,6 +82,7 @@ export default function HomeScreen({ route, navigation }) {
 
   const handleStartGame = async () => {
     const playerId = await getPlayerId();
+    console.log('[HomeScreen] START GAME using displayed gameCode:', createdGameCode);
     navigation.navigate('Setup', {
       playerName: resolvedName,
       gameCode: createdGameCode,
@@ -85,9 +92,23 @@ export default function HomeScreen({ route, navigation }) {
     });
   };
 
+  const handleCancelGame = async () => {
+    const code = createdGameCode;
+    if (!code) return;
+    try {
+      await deleteRoom(code);
+    } catch {
+      // ignore cleanup errors
+    } finally {
+      setCreatedGameCode('');
+      setIsCreating(false);
+    }
+  };
+
   const handleJoinGame = async () => {
     const code = joinCode.replace(/\D/g, '').slice(0, 4);
     if (code.length !== 4) return;
+    console.log('[HomeScreen] player typed join gameCode:', code);
     setBusy(true);
     try {
       let room = null;
@@ -106,6 +127,7 @@ export default function HomeScreen({ route, navigation }) {
         return;
       }
       const playerId = await getPlayerId();
+      console.log('[HomeScreen] joinRoom resolved gameCode:', room.gameCode || code);
       navigation.navigate('RoleAssignment', {
         playerName: resolvedName,
         gameCode: code,
@@ -174,58 +196,12 @@ export default function HomeScreen({ route, navigation }) {
 
             {/* ── Bottom content ─────────────────────────── */}
             <View style={styles.content}>
-              {/* Your Chef card */}
-              <ChunkyCard p={12} style={styles.card}>
-                <SectionLabel style={styles.sectionLabel}>Your Chef</SectionLabel>
-                <View style={styles.inputRow}>
-                  <Text style={styles.inputEmoji}>👨‍🍳</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Your chef name…"
-                    placeholderTextColor={PALETTE.espresso + '55'}
-                    value={playerName}
-                    onChangeText={setPlayerName}
-                    maxLength={24}
-                    autoCapitalize="words"
-                    returnKeyType="next"
-                  />
-                </View>
-              </ChunkyCard>
-
-              {/* Enter Game Code card */}
-              <ChunkyCard p={12} style={styles.card}>
-                <SectionLabel style={[styles.sectionLabel, styles.centerLabel]}>
-                  Enter Game Code
-                </SectionLabel>
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  onPress={() => hiddenInputRef.current?.focus()}
-                  style={styles.digitRow}
-                >
-                  {[0, 1, 2, 3].map((i) => {
-                    const digit = joinDigits[i] || '';
-                    return (
-                      <View key={i} style={[styles.digitBox, digit ? styles.digitBoxFilled : null]}>
-                        <Text style={styles.digitText}>{digit || '·'}</Text>
-                      </View>
-                    );
-                  })}
-                </TouchableOpacity>
-                <TextInput
-                  ref={hiddenInputRef}
-                  style={styles.hiddenInput}
-                  value={joinCode}
-                  onChangeText={(t) => setJoinCode(t.replace(/\D/g, '').slice(0, 4))}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  caretHidden
-                />
-              </ChunkyCard>
-
               {isCreating ? (
                 <ChunkyCard p={12} style={styles.waitCard}>
                   <Text style={styles.waitTitle}>Waiting for players...</Text>
-                  <Text style={styles.waitMeta}>Code: {createdGameCode}</Text>
+                  <Text style={styles.codeLabel}>YOUR CODE</Text>
+                  <Text style={styles.codeBig}>{createdGameCode}</Text>
+                  <Text style={styles.waitMeta}>Share this with friends</Text>
                   <Text style={styles.waitMeta}>Players joined: {liveCount}</Text>
                   <ChunkyBtn
                     small
@@ -238,32 +214,92 @@ export default function HomeScreen({ route, navigation }) {
                   >
                     START GAME →
                   </ChunkyBtn>
-                </ChunkyCard>
-              ) : (
-                <View style={styles.btnGroup}>
                   <ChunkyBtn
                     small
-                    bg={PALETTE.yellow}
+                    bg={PALETTE.paper}
                     shadowColor={PALETTE.espresso}
                     color={PALETTE.espresso}
-                    onPress={handleCreateGame}
-                    disabled={busy}
-                    style={styles.btn}
+                    onPress={handleCancelGame}
+                    style={styles.cancelBtn}
                   >
-                    ▶ Create Game
+                    Cancel Game
                   </ChunkyBtn>
-                  <ChunkyBtn
-                    small
-                    bg={PALETTE.tomato}
-                    shadowColor={PALETTE.espresso}
-                    color="#FFFFFF"
-                    onPress={handleJoinGame}
-                    disabled={!canJoin || busy}
-                    style={styles.btn}
-                  >
-                    Join Game
-                  </ChunkyBtn>
-                </View>
+                </ChunkyCard>
+              ) : (
+                <>
+                  {/* Your Chef card */}
+                  <ChunkyCard p={12} style={styles.card}>
+                    <SectionLabel style={styles.sectionLabel}>Your Chef</SectionLabel>
+                    <View style={styles.inputRow}>
+                      <Text style={styles.inputEmoji}>👨‍🍳</Text>
+                      <TextInput
+                        style={styles.textInput}
+                        placeholder="Your chef name…"
+                        placeholderTextColor={PALETTE.espresso + '55'}
+                        value={playerName}
+                        onChangeText={setPlayerName}
+                        maxLength={24}
+                        autoCapitalize="words"
+                        returnKeyType="next"
+                      />
+                    </View>
+                  </ChunkyCard>
+
+                  {/* Enter Game Code card */}
+                  <ChunkyCard p={12} style={styles.card}>
+                    <SectionLabel style={[styles.sectionLabel, styles.centerLabel]}>
+                      Enter Game Code
+                    </SectionLabel>
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPress={() => hiddenInputRef.current?.focus()}
+                      style={styles.digitRow}
+                    >
+                      {[0, 1, 2, 3].map((i) => {
+                        const digit = joinDigits[i] || '';
+                        return (
+                          <View key={i} style={[styles.digitBox, digit ? styles.digitBoxFilled : null]}>
+                            <Text style={styles.digitText}>{digit || '·'}</Text>
+                          </View>
+                        );
+                      })}
+                    </TouchableOpacity>
+                    <TextInput
+                      ref={hiddenInputRef}
+                      style={styles.hiddenInput}
+                      value={joinCode}
+                      onChangeText={(t) => setJoinCode(t.replace(/\D/g, '').slice(0, 4))}
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      caretHidden
+                    />
+                  </ChunkyCard>
+
+                  <View style={styles.btnGroup}>
+                    <ChunkyBtn
+                      small
+                      bg={PALETTE.yellow}
+                      shadowColor={PALETTE.espresso}
+                      color={PALETTE.espresso}
+                      onPress={handleCreateGame}
+                      disabled={busy}
+                      style={styles.btn}
+                    >
+                      ▶ Create Game
+                    </ChunkyBtn>
+                    <ChunkyBtn
+                      small
+                      bg={PALETTE.tomato}
+                      shadowColor={PALETTE.espresso}
+                      color="#FFFFFF"
+                      onPress={handleJoinGame}
+                      disabled={!canJoin || busy}
+                      style={styles.btn}
+                    >
+                      Join Game
+                    </ChunkyBtn>
+                  </View>
+                </>
               )}
             </View>
           </ScrollView>
@@ -437,7 +473,21 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: PALETTE.espresso,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
+  },
+  codeLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 12,
+    color: PALETTE.espresso,
+    letterSpacing: 2,
+    textAlign: 'center',
+  },
+  codeBig: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 48,
+    color: PALETTE.red,
+    textAlign: 'center',
+    lineHeight: 52,
   },
   waitMeta: {
     fontFamily: 'Fredoka_600SemiBold',
@@ -445,6 +495,9 @@ const styles = StyleSheet.create({
     color: PALETTE.espresso,
     textAlign: 'center',
     marginBottom: 6,
+  },
+  cancelBtn: {
+    marginTop: 2,
   },
   btn: {
     marginBottom: 0,
