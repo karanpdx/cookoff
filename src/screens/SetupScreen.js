@@ -21,6 +21,8 @@ import {
   SectionLabel,
 } from '../components/DesignSystem';
 import { ScreenBackButton } from '../components/ScreenBackButton';
+import { useRoomSync } from '../hooks/useRoomSync';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 
 const CUISINE_AND_DISH_OPTIONS = [
   'Italian',
@@ -147,7 +149,10 @@ const SKILL_LEVELS = [
 ];
 
 export default function SetupScreen({ route, navigation }) {
-  const { playerName = 'Player', gameCode = '', isHost = false, avatarUri } = route.params || {};
+  const { playerName = 'Player', gameCode = '', isHost = false, avatarUri, playerId } = route.params || {};
+  const { room, updateRoom } = useRoomSync(gameCode);
+  const { getPlayerId } = useFirebaseRoom();
+  const shouldWaitForHost = !isHost && Boolean(room);
   const [cuisineType, setCuisineType] = useState('');
   const [cuisineQuery, setCuisineQuery] = useState('');
   const [modifiers, setModifiers] = useState([]);
@@ -180,16 +185,31 @@ export default function SetupScreen({ route, navigation }) {
     setModifiers((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
   };
 
-  const handleSubmit = () => {
-    if (!canSubmit) {
-      return;
+  const handleHostContinue = async () => {
+    if (!canSubmit) return;
+    const me = playerId || (await getPlayerId());
+    const challenge = {
+      cuisineType,
+      modifiers,
+      budget: numericBudget,
+      cookTimeTarget,
+      skillLevel,
+      setBy: me,
+      createdAt: Date.now(),
+    };
+    try {
+      if (gameCode) {
+        await updateRoom({ challenge, status: 'setup' });
+      }
+    } catch {
+      // local fallback path keeps existing behavior
     }
-
     navigation.navigate('RoleAssignment', {
       playerName,
       gameCode,
       isHost,
       avatarUri,
+      playerId: me,
       cuisineType,
       modifiers,
       budget: numericBudget,
@@ -198,10 +218,41 @@ export default function SetupScreen({ route, navigation }) {
     });
   };
 
+  React.useEffect(() => {
+    if (isHost) return;
+    if (!room?.challenge) return;
+    (async () => {
+      const me = playerId || (await getPlayerId());
+      navigation.replace('RoleAssignment', {
+        playerName,
+        gameCode,
+        isHost: false,
+        avatarUri,
+        playerId: me,
+        cuisineType: room.challenge.cuisineType,
+        modifiers: room.challenge.modifiers || [],
+        budget: room.challenge.budget,
+        cookTimeTarget: room.challenge.cookTimeTarget || 20,
+        skillLevel: room.challenge.skillLevel || 'Beginner',
+      });
+    })();
+  }, [isHost, room?.challenge, playerName, gameCode, avatarUri, playerId, getPlayerId, navigation]);
+
   return (
     <SafeAreaView style={styles.safe}>
       <CloudBg />
       <ScreenBackButton navigation={navigation} />
+      {shouldWaitForHost ? (
+        <View style={styles.waitingWrap}>
+          <ChunkyCard>
+            <SectionLabel>Host is setting up the kitchen...</SectionLabel>
+            <Text style={styles.waitingCopy}>Game code: {gameCode || '----'}</Text>
+            {(room?.players || []).map((p) => (
+              <Text key={p.id} style={styles.waitingPlayer}>• {p.name}{p.isHost ? ' (Host)' : ''}</Text>
+            ))}
+          </ChunkyCard>
+        </View>
+      ) : (
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -386,7 +437,7 @@ export default function SetupScreen({ route, navigation }) {
               bg={PALETTE.yellow}
               shadowColor={PALETTE.espresso}
               color={PALETTE.espresso}
-              onPress={handleSubmit}
+              onPress={handleHostContinue}
               disabled={!canSubmit}
             >
               Continue →
@@ -395,6 +446,7 @@ export default function SetupScreen({ route, navigation }) {
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
+      )}
     </SafeAreaView>
   );
 }
@@ -406,6 +458,23 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  waitingWrap: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 120,
+  },
+  waitingCopy: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+    marginBottom: 10,
+  },
+  waitingPlayer: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+    marginBottom: 6,
   },
   dismissWrap: {
     flex: 1,

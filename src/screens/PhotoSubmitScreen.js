@@ -22,6 +22,8 @@ import {
 } from '../components/DesignSystem';
 import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useGameSession } from '../context/GameSessionContext';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
+import { useRoomSync } from '../hooks/useRoomSync';
 
 export default function PhotoSubmitScreen({ route, navigation }) {
   const {
@@ -34,10 +36,39 @@ export default function PhotoSubmitScreen({ route, navigation }) {
     skillLevel,
     avatarUri,
     cookTimeTarget = 20,
+    playerId,
   } = route.params || {};
+  const { room, updateRoom } = useRoomSync(gameCode);
+  const { getPlayerId, updatePlayerPhoto } = useFirebaseRoom();
   const { addDishSubmission } = useGameSession();
   const [photoUri, setPhotoUri] = useState(null);
   const [dishName, setDishName] = useState('');
+  const [selfId, setSelfId] = useState(playerId || null);
+
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
+
+  React.useEffect(() => {
+    const players = room?.players || [];
+    if (!players.length) return;
+    const host = players.find((p) => p.isHost);
+    if (!host || host.id !== selfId) return;
+    const competitors = players.filter((p) => p.role === 'COMPETITOR');
+    if (!competitors.length) return;
+    const allSubmitted = competitors.every((p) => Boolean(p.photoUri));
+    if (allSubmitted && room.status !== 'voting') {
+      updateRoom({ status: 'voting' }).catch(() => {});
+    }
+  }, [room?.players, room?.status, selfId, updateRoom]);
 
   const ensurePermission = async (permissionType) => {
     const permissionResponse =
@@ -87,7 +118,7 @@ export default function PhotoSubmitScreen({ route, navigation }) {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!photoUri) {
       Alert.alert('No photo selected', 'Please take or choose a dish photo first.');
       return;
@@ -99,6 +130,13 @@ export default function PhotoSubmitScreen({ route, navigation }) {
     }
 
     addDishSubmission({ playerName, dishName: name, photoUri });
+    if (room && selfId) {
+      try {
+        await updatePlayerPhoto(gameCode, selfId, photoUri, name);
+      } catch {
+        // local fallback still works
+      }
+    }
     navigation.navigate('VotingScreen', {
       playerName,
       gameCode,
@@ -109,6 +147,7 @@ export default function PhotoSubmitScreen({ route, navigation }) {
       skillLevel,
       avatarUri,
       cookTimeTarget,
+      playerId: selfId,
     });
   };
 

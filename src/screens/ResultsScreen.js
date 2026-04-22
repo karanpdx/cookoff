@@ -14,6 +14,8 @@ import {
   DrippyTitle,
   CloudBg,
 } from '../components/DesignSystem';
+import { useRoomSync } from '../hooks/useRoomSync';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 
 // Generate confetti rectangles deterministically
 const CONFETTI_COLORS = [
@@ -34,9 +36,56 @@ const CONFETTI = Array.from({ length: 22 }, (_, i) => ({
 }));
 
 export default function ResultsScreen({ route, navigation }) {
-  const { photoUri, playerName = 'Player', score } = route.params || {};
+  const { photoUri, playerName = 'Player', score, gameCode, playerId } = route.params || {};
+  const { room, updateRoom } = useRoomSync(gameCode);
+  const { getPlayerId } = useFirebaseRoom();
+  const [selfId, setSelfId] = React.useState(playerId || null);
 
-  const handlePlayAgain = () => {
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
+
+  const ranked = React.useMemo(() => {
+    const players = room?.players || [];
+    const withScores = players
+      .filter((p) => p.photoUri)
+      .map((p) => ({ ...p, finalScore: Number.isFinite(p.score) ? p.score : 0 }))
+      .sort((a, b) => b.finalScore - a.finalScore);
+    return withScores;
+  }, [room?.players]);
+  const winner = ranked[0] || null;
+
+  const handlePlayAgain = async () => {
+    if (room && selfId) {
+      const me = (room.players || []).find((p) => p.id === selfId);
+      if (me?.isHost) {
+        const resetPlayers = (room.players || []).map((p) => ({
+          ...p,
+          role: null,
+          photoUri: null,
+          dishName: null,
+          score: null,
+        }));
+        await updateRoom({
+          status: 'waiting',
+          challenge: null,
+          recipe: null,
+          roasts: [],
+          votes: {},
+          bets: {},
+          sabotageCards: [],
+          players: resetPlayers,
+        }).catch(() => {});
+      }
+    }
     navigation.reset({
       index: 0,
       routes: [{ name: 'Home' }],
@@ -78,9 +127,9 @@ export default function ResultsScreen({ route, navigation }) {
         {/* Leaderboard card */}
         <ChunkyCard style={styles.cardSpacing}>
           {/* Photo or dish emoji */}
-          {photoUri ? (
+          {winner?.photoUri || photoUri ? (
             <Image
-              source={{ uri: photoUri }}
+              source={{ uri: winner?.photoUri || photoUri }}
               style={styles.photoThumb}
               resizeMode="cover"
             />
@@ -95,9 +144,9 @@ export default function ResultsScreen({ route, navigation }) {
             <View style={styles.placeBadge}>
               <Text style={styles.placeBadgeText}>1ST</Text>
             </View>
-            <Text style={styles.placePlayerName}>{playerName}</Text>
-            {score != null && (
-              <Text style={styles.placeScore}>{score}.0</Text>
+            <Text style={styles.placePlayerName}>{winner?.name || playerName}</Text>
+            {(winner?.score != null || score != null) && (
+              <Text style={styles.placeScore}>{winner?.score ?? score}.0</Text>
             )}
           </View>
 
@@ -106,8 +155,8 @@ export default function ResultsScreen({ route, navigation }) {
             <View style={[styles.placeBadge, styles.placeBadgeSilver]}>
               <Text style={styles.placeBadgeTextMuted}>2ND</Text>
             </View>
-            <Text style={[styles.placePlayerName, styles.placePlayerNameMuted]}>Chef Alex</Text>
-            <Text style={[styles.placeScore, styles.placeScoreMuted]}>7.5</Text>
+            <Text style={[styles.placePlayerName, styles.placePlayerNameMuted]}>{ranked[1]?.name || 'Chef Alex'}</Text>
+            <Text style={[styles.placeScore, styles.placeScoreMuted]}>{ranked[1]?.score ?? '7.5'}</Text>
           </View>
 
           {/* Fake 3rd place */}
@@ -115,8 +164,8 @@ export default function ResultsScreen({ route, navigation }) {
             <View style={[styles.placeBadge, styles.placeBadgeBronze]}>
               <Text style={styles.placeBadgeTextMuted}>3RD</Text>
             </View>
-            <Text style={[styles.placePlayerName, styles.placePlayerNameMuted]}>Chef Jordan</Text>
-            <Text style={[styles.placeScore, styles.placeScoreMuted]}>6.2</Text>
+            <Text style={[styles.placePlayerName, styles.placePlayerNameMuted]}>{ranked[2]?.name || 'Chef Jordan'}</Text>
+            <Text style={[styles.placeScore, styles.placeScoreMuted]}>{ranked[2]?.score ?? '6.2'}</Text>
           </View>
         </ChunkyCard>
 

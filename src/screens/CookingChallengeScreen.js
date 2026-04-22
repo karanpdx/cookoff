@@ -23,6 +23,8 @@ import { ScreenBackButton } from '../components/ScreenBackButton';
 import { ChallengeHeaderCompact } from '../components/ChallengeCards';
 import { useGameSession } from '../context/GameSessionContext';
 import { fetchChallengePrompt } from '../services/kitchenClaude';
+import { useRoomSync } from '../hooks/useRoomSync';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 
 const COOKING_PROMPTS = [
   {
@@ -102,34 +104,51 @@ function normalizeCookTime(minutes) {
   return Math.min(60, Math.max(5, Math.round(n)));
 }
 
-function buildRecipeChefPrompt({ dishOrCuisine, budget, cookTimeTarget, modifiers, skillLevel }) {
+const GENERIC_INGREDIENT_WORDS = ['suitable', 'pantry', 'bundle', 'supporting', 'aromatics bundle', 'protein suitable'];
+
+function hasGenericIngredients(ingredients) {
+  return ingredients.some((ing) =>
+    GENERIC_INGREDIENT_WORDS.some((w) => ing.toLowerCase().includes(w))
+  );
+}
+
+function buildRecipeChefPrompt({ userDish, cuisineType, budget, cookTimeTarget, modifiers, skillLevel, retry = false }) {
   const modLine = Array.isArray(modifiers) && modifiers.length ? modifiers.join(', ') : 'none';
-  return `You are a professional chef generating a recipe. STRICT CONSTRAINTS you MUST follow:
+  const retrySuffix = retry ? '\n\nTry again with actual specific ingredients. No generic placeholders at all.' : '';
+  return `You must generate a SPECIFIC recipe with REAL ingredient names and REAL cooking steps. Absolutely no generic placeholders like 'protein suitable for X', 'aromatics bundle', or 'supporting veg'. Every ingredient must be a concrete food with measurement.
 
-DISH: ${dishOrCuisine}
-BUDGET: $${budget} USD — total ingredient cost must fit within this
-TIME CONSTRAINT: Recipe must complete in approximately ${cookTimeTarget} minutes
-MODIFIERS: ${modLine} — recipe MUST match these characteristics
-SKILL LEVEL: ${skillLevel}
+User input:
+- Dish: "${userDish}"
+- Cuisine: ${cuisineType}
+- Budget: $${budget}
+- Target cook time: ${cookTimeTarget} minutes
+- Modifiers: ${modLine}
+- Skill: ${skillLevel}
 
-Rules:
-- If modifiers include 'Hot' — use heat/spice
-- If 'Cold' — NO cooking steps with heat
-- If 'Soupy' — broth-based
-- If 'Quick' — max 20 minutes total
-- If 'Fancy' — plating emphasis, garnishes
-- Generate a SPECIFIC recipe that matches the dish name exactly, not a generic substitute
-- Budget $15 = simple ingredients, $50+ = premium (steak, seafood)
-- Each call MUST differ from previous calls — vary proteins, techniques, garnishes
-
-Return ONLY valid JSON (no markdown):
+EXAMPLE quality you must match (for input: Udon, Hot, 40 min):
 {
-  "dishName": "specific creative name",
-  "cookTime": integer minutes,
-  "estimatedCost": integer dollars,
-  "ingredients": ["specific qty + ingredient", ...],
-  "steps": ["numbered specific action 1-2 sentences each", ...]
-}`;
+  "dishName": "Spicy Miso Udon with Charred Scallions",
+  "cookTime": 40,
+  "estimatedCost": 14,
+  "ingredients": [
+    "2 packs fresh udon noodles (200g each)",
+    "3 tbsp white miso paste",
+    "2 tbsp chili oil",
+    "4 cups dashi or chicken broth",
+    "6 scallions, halved lengthwise",
+    "2 soft boiled eggs"
+  ],
+  "steps": [
+    "Bring dashi to a simmer, whisk in miso until dissolved.",
+    "Char halved scallions in dry cast iron pan until blackened edges, 3 min per side.",
+    "Boil udon 3 min per package, drain.",
+    "Ladle hot broth over noodles in bowls.",
+    "Top with halved soft boiled egg, charred scallions, drizzle chili oil.",
+    "Serve immediately."
+  ]
+}
+
+Return ONLY valid JSON matching this structure for the user's inputs. No markdown, no explanation.${retrySuffix}`;
 }
 
 function parseRecipeFromClaude(text) {
@@ -182,22 +201,35 @@ function fallbackRecipeSteps(title) {
 }
 
 function fallbackRecipe(title, cuisineType, budget) {
+  const isHighBudget = Number(budget) >= 40;
   return {
     cookTime: 25,
-    dishName: `${title} — signature plate`,
-    ingredients: [
-      '2 tbsp neutral oil',
-      `Protein or main suitable for ${cuisineType || 'your'} pantry`,
-      '1 aromatics bundle (onion/garlic/ginger as fits)',
-      '1 cup supporting veg or starch',
-      `Acid + herbs to finish (within ~$${budget} shopping mindset)`,
-      'Salt, pepper, and one bold spice you love',
-    ],
+    dishName: `${cuisineType || title} — chef's plate`,
+    ingredients: isHighBudget
+      ? [
+          '200g ribeye steak or salmon fillet',
+          '2 tbsp unsalted butter',
+          '3 cloves garlic, minced',
+          '1 lemon, zested and juiced',
+          '1 bunch fresh thyme',
+          'Flaky sea salt and cracked black pepper',
+          '1 cup baby spinach or watercress',
+        ]
+      : [
+          '2 chicken thighs (bone-in) or 200g firm tofu',
+          '2 tbsp olive oil',
+          '3 cloves garlic, sliced',
+          '1 can (400g) diced tomatoes',
+          '1 tsp smoked paprika',
+          '1 cup cooked rice or crusty bread to serve',
+          'Fresh parsley to garnish',
+        ],
     steps: fallbackRecipeSteps(title),
   };
 }
 
 export default function CookingChallengeScreen({ route, navigation }) {
+  const params = route.params || {};
   const {
     playerName,
     gameCode,
@@ -208,7 +240,10 @@ export default function CookingChallengeScreen({ route, navigation }) {
     skillLevel,
     avatarUri,
     cookTimeTarget = 20,
-  } = route.params;
+    playerId,
+  } = params;
+  const { room, updateRoom } = useRoomSync(gameCode);
+  const { getPlayerId } = useFirebaseRoom();
   const {
     liveRoast,
     liveRoastSeq,
@@ -248,6 +283,22 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const toastTranslate = useRef(new Animated.Value(-100)).current;
   const lastRoastSeqRef = useRef(0);
   const [toastText, setToastText] = useState('');
+  const [selfId, setSelfId] = useState(playerId || null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
+
+  const roomPlayer = (room?.players || []).find((p) => p.id === selfId);
+  const isHostPlayer = Boolean(roomPlayer?.isHost);
 
   // Entrance fade
   useEffect(() => {
@@ -260,6 +311,18 @@ export default function CookingChallengeScreen({ route, navigation }) {
 
   useEffect(() => {
     let cancelled = false;
+    const roomChallenge = room?.challenge;
+    if (roomChallenge?.cuisineType) {
+      setPrompt({
+        emoji: '🍳',
+        title: roomChallenge.cuisineType,
+        description: `Budget $${roomChallenge.budget} · ${roomChallenge.skillLevel} · ${roomChallenge.cookTimeTarget} min`,
+      });
+      setIsLoadingPrompt(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const getFallbackPrompt = () =>
       COOKING_PROMPTS[Math.floor(Math.random() * COOKING_PROMPTS.length)];
@@ -296,7 +359,16 @@ export default function CookingChallengeScreen({ route, navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [cuisineType, budget, skillLevel, kitchenChallenge, kitchenChallengeKey, sessionKey, setKitchenChallenge]);
+  }, [
+    cuisineType,
+    budget,
+    skillLevel,
+    kitchenChallenge,
+    kitchenChallengeKey,
+    sessionKey,
+    setKitchenChallenge,
+    room?.challenge,
+  ]);
 
   useEffect(() => {
     setPowerInventory(normalizePowerInventory(route.params?.powerInventory));
@@ -327,42 +399,68 @@ export default function CookingChallengeScreen({ route, navigation }) {
   // Claude: personalized recipe + cook time for this challenge
   useEffect(() => {
     if (!prompt?.title) return;
+    if (room?.recipe) {
+      const remote = room.recipe;
+      const computedSeconds = (Number(remote.cookTime) || 20) * 60;
+      setTotalSeconds(computedSeconds);
+      if (typeof route.params?.secondsLeft !== 'number') {
+        setSecondsLeft(computedSeconds);
+      }
+      setRecipeDishName(remote.dishName || '');
+      setRecipeIngredients(remote.ingredients || []);
+      setRecipeSteps(remote.steps || []);
+      setLoadingRecipeSteps(false);
+      if (isCompetitor) setIsRunning(true);
+      return;
+    }
+    if (room && !isHostPlayer) return;
     let cancelled = false;
+
+    const callClaude = async (retry = false) => {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key':
+            'DEa4sHcIC4rKJ_nu9ZE7GGvUFwXaBrP9cVpVCiL44WTtentlC1jsLZ05Epcjhopohsc4SrTixZwzXHx3PKHe-A-auJM1wAA',
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1400,
+          temperature: 0.9,
+          messages: [
+            {
+              role: 'user',
+              content: buildRecipeChefPrompt({
+                userDish: cuisineType || 'chef choice',
+                cuisineType: cuisineType || 'Any',
+                budget,
+                cookTimeTarget: Math.max(5, Math.round(initialTotalSeconds / 60)),
+                modifiers,
+                skillLevel: skillLevel || 'Intermediate',
+                retry,
+              }),
+            },
+          ],
+        }),
+      });
+      if (!response.ok) throw new Error('Recipe request failed');
+      const data = await response.json();
+      return data?.content?.[0]?.text;
+    };
 
     const loadRecipe = async () => {
       setLoadingRecipeSteps(true);
       const challengeTitle = prompt.title;
       try {
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key':
-              'DEa4sHcIC4rKJ_nu9ZE7GGvUFwXaBrP9cVpVCiL44WTtentlC1jsLZ05Epcjhopohsc4SrTixZwzXHx3PKHe-A-auJM1wAA',
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 1200,
-            messages: [
-              {
-                role: 'user',
-                content: buildRecipeChefPrompt({
-                  dishOrCuisine: `${challengeTitle} — cuisine: ${cuisineType || 'chef choice'}`,
-                  budget,
-                  cookTimeTarget: Math.max(5, Math.round(initialTotalSeconds / 60)),
-                  modifiers,
-                  skillLevel: skillLevel || 'Intermediate',
-                }),
-              },
-            ],
-          }),
-        });
-
-        if (!response.ok) throw new Error('Recipe request failed');
-        const data = await response.json();
-        const text = data?.content?.[0]?.text;
-        const { cookTime, dishName, ingredients, steps, estimatedCost } = parseRecipeFromClaude(text);
+        let text = await callClaude(false);
+        let parsed = parseRecipeFromClaude(text);
+        if (hasGenericIngredients(parsed.ingredients)) {
+          text = await callClaude(true);
+          parsed = parseRecipeFromClaude(text);
+        }
+        const { cookTime, dishName, ingredients, steps, estimatedCost } = parsed;
         if (!cancelled && ingredients.length && steps.length >= 4) {
           const computedSeconds = cookTime * 60;
           setTotalSeconds(computedSeconds);
@@ -372,14 +470,22 @@ export default function CookingChallengeScreen({ route, navigation }) {
           setRecipeDishName(dishName);
           setRecipeIngredients(ingredients);
           setRecipeSteps(steps);
-          setSessionRecipe({
+          const nextRecipe = {
             dishName,
             ingredients,
             steps,
             cookTime,
             challengeTitle,
             ...(estimatedCost != null ? { estimatedCost } : {}),
-          });
+          };
+          setSessionRecipe(nextRecipe);
+          if (room) {
+            try {
+              await updateRoom({ recipe: nextRecipe });
+            } catch {
+              // keep local fallback
+            }
+          }
         } else if (!cancelled) {
           const fb = fallbackRecipe(challengeTitle, cuisineType, budget);
           const computedSeconds = fb.cookTime * 60;
@@ -440,7 +546,29 @@ export default function CookingChallengeScreen({ route, navigation }) {
     initialTotalSeconds,
     isCompetitor,
     setSessionRecipe,
+    room?.recipe,
+    room,
+    isHostPlayer,
+    updateRoom,
   ]);
+
+  useEffect(() => {
+    if (!room?.status) return;
+    if (room.status === 'voting') {
+      navigation.replace('VotingScreen', {
+        playerName,
+        gameCode,
+        role,
+        cuisineType,
+        modifiers,
+        budget,
+        skillLevel,
+        avatarUri,
+        cookTimeTarget: cookTimeTargetMinutes,
+        playerId: selfId,
+      });
+    }
+  }, [room?.status, role, navigation, playerName, gameCode, cuisineType, modifiers, budget, skillLevel, avatarUri, cookTimeTargetMinutes, selfId]);
 
   // Restore timer when returning (e.g. from Sabotage) with updated params
   useEffect(() => {
@@ -487,8 +615,16 @@ export default function CookingChallengeScreen({ route, navigation }) {
     }
   }, [secondsLeft <= 60, finished]);
 
-  const handleDone = useCallback(() => {
+  const handleDone = useCallback(async () => {
     clearInterval(intervalRef.current);
+    if (room && isHostPlayer) {
+      try {
+        await updateRoom({ status: 'voting' });
+        return;
+      } catch {
+        // fallback below
+      }
+    }
     if (role === 'JUDGE') {
       navigation.navigate('VotingScreen', {
         playerName,
@@ -525,6 +661,9 @@ export default function CookingChallengeScreen({ route, navigation }) {
     skillLevel,
     avatarUri,
     cookTimeTargetMinutes,
+    room,
+    isHostPlayer,
+    updateRoom,
   ]);
 
   const togglePause = () => {

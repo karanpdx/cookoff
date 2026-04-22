@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,8 +15,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { addDoc, collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../firebase';
 import {
   PALETTE,
   ChunkyBtn,
@@ -26,53 +24,99 @@ import {
   SectionLabel,
 } from '../components/DesignSystem';
 import { useBackgroundMusic } from '../hooks/useBackgroundMusic';
+import { useGameSession } from '../context/GameSessionContext';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
+import { useRoomSync } from '../hooks/useRoomSync';
 
 const HERO_IMAGE_HEIGHT = Dimensions.get('window').height * 0.35;
 
-export default function HomeScreen({ navigation }) {
-  const { isMuted, toggleMute } = useBackgroundMusic();
+export default function HomeScreen({ route, navigation }) {
+  const { avatarUri } = route.params || {};
+  const { isMuted, toggleMute, musicAvailable } = useBackgroundMusic();
+  const { setAvatarUri } = useGameSession();
+  const { createRoom, joinRoom, getPlayerId, findRoomByCode } = useFirebaseRoom();
+
+  React.useEffect(() => {
+    if (avatarUri) setAvatarUri(avatarUri);
+  }, [avatarUri, setAvatarUri]);
   const [playerName, setPlayerName] = useState('');
   const [joinCode, setJoinCode] = useState('');
+  const [createdGameCode, setCreatedGameCode] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [busy, setBusy] = useState(false);
   const hiddenInputRef = useRef(null);
+  const { room: liveRoom } = useRoomSync(createdGameCode);
 
   const resolvedName = playerName.trim() || 'Player';
 
+  const liveCount = useMemo(() => {
+    const players = liveRoom?.players;
+    return Array.isArray(players) ? players.length : 1;
+  }, [liveRoom?.players]);
+  const canStart = liveCount >= 2;
+
   const handleCreateGame = async () => {
+    setBusy(true);
     try {
-      const gameCode = Math.floor(1000 + Math.random() * 9000).toString();
-      await addDoc(collection(db, 'rooms'), {
-        gameCode,
-        status: 'waiting',
-        players: [],
-        createdAt: Date.now(),
-      });
+      const gameCode = await createRoom(resolvedName, avatarUri);
+      setCreatedGameCode(gameCode);
+      setIsCreating(true);
+    } catch {
+      const fallbackCode = Math.floor(1000 + Math.random() * 9000).toString();
       navigation.navigate('Setup', {
         playerName: resolvedName,
-        gameCode,
+        gameCode: fallbackCode,
         isHost: true,
+        avatarUri,
       });
-    } catch {
-      Alert.alert('Error', 'Could not create game. Check your connection and try again.');
+    } finally {
+      setBusy(false);
     }
+  };
+
+  const handleStartGame = async () => {
+    const playerId = await getPlayerId();
+    navigation.navigate('Setup', {
+      playerName: resolvedName,
+      gameCode: createdGameCode,
+      isHost: true,
+      avatarUri,
+      playerId,
+    });
   };
 
   const handleJoinGame = async () => {
     const code = joinCode.replace(/\D/g, '').slice(0, 4);
     if (code.length !== 4) return;
+    setBusy(true);
     try {
-      const q = query(collection(db, 'rooms'), where('gameCode', '==', code));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) {
-        Alert.alert('Game not found');
+      let room = null;
+      try {
+        room = await joinRoom(code, resolvedName, avatarUri);
+      } catch {
+        room = await findRoomByCode(code);
+      }
+      if (!room) {
+        navigation.navigate('Setup', {
+          playerName: resolvedName,
+          gameCode: code,
+          isHost: false,
+          avatarUri,
+        });
         return;
       }
-      navigation.navigate('Setup', {
+      const playerId = await getPlayerId();
+      navigation.navigate('RoleAssignment', {
         playerName: resolvedName,
         gameCode: code,
         isHost: false,
+        avatarUri,
+        playerId,
       });
     } catch {
       Alert.alert('Error', 'Could not look up game. Check your connection and try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -82,7 +126,12 @@ export default function HomeScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <CloudBg />
-      <TouchableOpacity style={styles.muteToggle} onPress={toggleMute} activeOpacity={0.85}>
+      <TouchableOpacity
+        style={[styles.muteToggle, !musicAvailable && styles.muteToggleDisabled]}
+        onPress={toggleMute}
+        activeOpacity={musicAvailable ? 0.85 : 1}
+        disabled={!musicAvailable}
+      >
         <Text style={styles.muteToggleText}>{isMuted ? '🔇' : '🔊'}</Text>
       </TouchableOpacity>
 
@@ -109,15 +158,18 @@ export default function HomeScreen({ navigation }) {
               </DrippyTitle>
             </View>
 
-            {/* ── Hero illustration — fixed height (keyboard does not shrink it) ── */}
+            {/* ── Hero illustration — natural aspect, sky blends with screen ── */}
             <View style={styles.heroWrapper}>
-              <View style={styles.heroCropMask}>
-                <Image
-                  source={require('../../assets/hero_home.png')}
-                  style={styles.heroImage}
-                  resizeMode="cover"
-                />
-              </View>
+              <Image
+                source={require('../../assets/hero_home.png')}
+                style={styles.heroImage}
+                resizeMode="contain"
+              />
+              {avatarUri && (
+                <View style={styles.heroAvatarCorner}>
+                  <Image source={{ uri: avatarUri }} style={styles.heroAvatarImg} />
+                </View>
+              )}
             </View>
 
             {/* ── Bottom content ─────────────────────────── */}
@@ -170,30 +222,49 @@ export default function HomeScreen({ navigation }) {
                 />
               </ChunkyCard>
 
-              {/* Buttons */}
-              <View style={styles.btnGroup}>
-                <ChunkyBtn
-                  small
-                  bg={PALETTE.yellow}
-                  shadowColor={PALETTE.espresso}
-                  color={PALETTE.espresso}
-                  onPress={handleCreateGame}
-                  style={styles.btn}
-                >
-                  ▶ Create Game
-                </ChunkyBtn>
-                <ChunkyBtn
-                  small
-                  bg={PALETTE.tomato}
-                  shadowColor={PALETTE.espresso}
-                  color="#FFFFFF"
-                  onPress={handleJoinGame}
-                  disabled={!canJoin}
-                  style={styles.btn}
-                >
-                  Join Game
-                </ChunkyBtn>
-              </View>
+              {isCreating ? (
+                <ChunkyCard p={12} style={styles.waitCard}>
+                  <Text style={styles.waitTitle}>Waiting for players...</Text>
+                  <Text style={styles.waitMeta}>Code: {createdGameCode}</Text>
+                  <Text style={styles.waitMeta}>Players joined: {liveCount}</Text>
+                  <ChunkyBtn
+                    small
+                    bg={PALETTE.yellow}
+                    shadowColor={PALETTE.espresso}
+                    color={PALETTE.espresso}
+                    onPress={handleStartGame}
+                    disabled={!canStart}
+                    style={styles.btn}
+                  >
+                    START GAME →
+                  </ChunkyBtn>
+                </ChunkyCard>
+              ) : (
+                <View style={styles.btnGroup}>
+                  <ChunkyBtn
+                    small
+                    bg={PALETTE.yellow}
+                    shadowColor={PALETTE.espresso}
+                    color={PALETTE.espresso}
+                    onPress={handleCreateGame}
+                    disabled={busy}
+                    style={styles.btn}
+                  >
+                    ▶ Create Game
+                  </ChunkyBtn>
+                  <ChunkyBtn
+                    small
+                    bg={PALETTE.tomato}
+                    shadowColor={PALETTE.espresso}
+                    color="#FFFFFF"
+                    onPress={handleJoinGame}
+                    disabled={!canJoin || busy}
+                    style={styles.btn}
+                  >
+                    Join Game
+                  </ChunkyBtn>
+                </View>
+              )}
             </View>
           </ScrollView>
         </TouchableWithoutFeedback>
@@ -211,7 +282,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 14,
     top: 52,
-    zIndex: 5,
+    zIndex: 2,
     backgroundColor: PALETTE.paper,
     borderWidth: 2,
     borderColor: PALETTE.espresso,
@@ -220,6 +291,9 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  muteToggleDisabled: {
+    opacity: 0.55,
   },
   muteToggleText: {
     fontFamily: 'TitanOne_400Regular',
@@ -250,29 +324,39 @@ const styles = StyleSheet.create({
     lineHeight: 72,
   },
 
-  // ── Hero — fixed height so keyboard does not resize it ──
+  // ── Hero — fixed height, contain (no crop/mask) ──
   heroWrapper: {
     alignSelf: 'stretch',
     height: HERO_IMAGE_HEIGHT,
     marginBottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    transform: [{ translateY: 20 }],
-    zIndex: 2,
-  },
-  heroCropMask: {
-    width: '100%',
-    height: HERO_IMAGE_HEIGHT - 14,
-    overflow: 'hidden',
+    zIndex: 1,
   },
   heroImage: {
     width: '100%',
-    height: HERO_IMAGE_HEIGHT + 28,
+    height: HERO_IMAGE_HEIGHT,
+  },
+  heroAvatarCorner: {
+    position: 'absolute',
+    top: 8,
+    right: 12,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 3,
+    borderColor: PALETTE.espresso,
+    overflow: 'hidden',
+    backgroundColor: PALETTE.cream,
+  },
+  heroAvatarImg: {
+    width: '100%',
+    height: '100%',
   },
 
-  // ── Bottom content — tight to hero (0–8px gap) ─
+  // ── Bottom content — pulled up to eliminate sky gap ─
   content: {
-    marginTop: 4,
+    marginTop: -20,
     paddingHorizontal: 20,
     paddingBottom: 12,
   },
@@ -344,6 +428,23 @@ const styles = StyleSheet.create({
   btnGroup: {
     gap: 8,
     marginTop: 2,
+  },
+  waitCard: {
+    marginTop: 6,
+  },
+  waitTitle: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 18,
+    color: PALETTE.espresso,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  waitMeta: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+    textAlign: 'center',
+    marginBottom: 6,
   },
   btn: {
     marginBottom: 0,

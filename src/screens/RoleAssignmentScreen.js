@@ -19,6 +19,8 @@ import { ScreenBackButton } from '../components/ScreenBackButton';
 import { ChallengeHeaderCompact } from '../components/ChallengeCards';
 import { useGameSession } from '../context/GameSessionContext';
 import { fetchChallengePrompt } from '../services/kitchenClaude';
+import { useRoomSync } from '../hooks/useRoomSync';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 
 const ROLES = [
   {
@@ -55,6 +57,7 @@ function assignRole() {
 }
 
 export default function RoleAssignmentScreen({ route, navigation }) {
+  const params = route.params || {};
   const {
     playerName,
     gameCode,
@@ -65,9 +68,14 @@ export default function RoleAssignmentScreen({ route, navigation }) {
     skillLevel,
     avatarUri,
     cookTimeTarget = 20,
-  } = route.params;
+    playerId,
+  } = params;
+  const { room } = useRoomSync(gameCode);
+  const { assignRoles, getPlayerId } = useFirebaseRoom();
   const { kitchenChallenge, kitchenChallengeKey, setKitchenChallenge } = useGameSession();
-  const [role] = useState(() => assignRole());
+  const [fallbackRole] = useState(() => assignRole());
+  const [selfId, setSelfId] = useState(playerId || null);
+  const [roleAssignedOnce, setRoleAssignedOnce] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [challengeLoading, setChallengeLoading] = useState(true);
   const sessionKey = `${cuisineType}|${budget}|${skillLevel}|${cookTimeTarget}`;
@@ -100,7 +108,41 @@ export default function RoleAssignmentScreen({ route, navigation }) {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
+
+  useEffect(() => {
+    if (!isHost || roleAssignedOnce || !room?.players?.length) return;
+    assignRoles(gameCode)
+      .catch(() => {})
+      .finally(() => setRoleAssignedOnce(true));
+  }, [isHost, roleAssignedOnce, room?.players?.length, assignRoles, gameCode]);
+
+  useEffect(() => {
     let cancelled = false;
+    const roomChallenge = room?.challenge;
+    if (roomChallenge?.cuisineType) {
+      setKitchenChallenge(
+        {
+          emoji: '🍳',
+          title: roomChallenge.cuisineType,
+          description: `Budget $${roomChallenge.budget} · ${roomChallenge.skillLevel}`,
+        },
+        sessionKey
+      );
+      setChallengeLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
     if (kitchenChallenge && kitchenChallengeKey === sessionKey) {
       setChallengeLoading(false);
       return () => {
@@ -131,7 +173,16 @@ export default function RoleAssignmentScreen({ route, navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [cuisineType, budget, skillLevel, sessionKey, kitchenChallenge, kitchenChallengeKey, setKitchenChallenge]);
+  }, [
+    cuisineType,
+    budget,
+    skillLevel,
+    sessionKey,
+    kitchenChallenge,
+    kitchenChallengeKey,
+    setKitchenChallenge,
+    room?.challenge,
+  ]);
 
   useEffect(() => {
     if (!revealed) return;
@@ -145,6 +196,10 @@ export default function RoleAssignmentScreen({ route, navigation }) {
     return () => pulse.stop();
   }, [revealed]);
 
+  const roomPlayer = (room?.players || []).find((p) => p.id === selfId);
+  const roleName = roomPlayer?.role || fallbackRole.name;
+  const role = ROLES.find((r) => r.name === roleName) || fallbackRole;
+
   const handleReady = () => {
     const base = {
       playerName,
@@ -156,6 +211,7 @@ export default function RoleAssignmentScreen({ route, navigation }) {
       skillLevel,
       avatarUri,
       cookTimeTarget,
+      playerId: selfId,
     };
     if (role.name === 'SPECTATOR') {
       navigation.navigate('Spectator', {
@@ -168,6 +224,7 @@ export default function RoleAssignmentScreen({ route, navigation }) {
         skillLevel,
         avatarUri,
         cookTimeTarget,
+        playerId: selfId,
       });
     } else {
       navigation.navigate('CookingChallenge', base);
@@ -190,6 +247,8 @@ export default function RoleAssignmentScreen({ route, navigation }) {
 
         {challengeLoading ? (
           <Text style={styles.challengeLoading}>Loading tonight&apos;s challenge…</Text>
+        ) : room && !roomPlayer?.role ? (
+          <Text style={styles.challengeLoading}>Host is assigning roles...</Text>
         ) : (
           kitchenChallenge && (
             <ChallengeHeaderCompact
