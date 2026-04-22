@@ -249,11 +249,19 @@ export default function CookingChallengeScreen({ route, navigation }) {
     liveRoastSeq,
     cookingRoasts,
     upvoteCookingRoast,
+    kitchenChallenge,
+    kitchenChallengeKey,
+    setKitchenChallenge,
     setSessionRecipe,
   } = useGameSession();
   const cookTimeTargetMinutes = Math.min(60, Math.max(10, Math.round(Number(cookTimeTarget)) || 20));
+  const sessionKey = `${cuisineType}|${budget}|${skillLevel}|${cookTimeTargetMinutes}`;
   const isCompetitor = role === 'COMPETITOR';
   const isFocused = useIsFocused();
+  const roomChallengeSig = React.useMemo(
+    () => JSON.stringify(room?.challenge || null),
+    [room?.challenge]
+  );
   const roomRoastsSig = React.useMemo(
     () => JSON.stringify(room?.roasts || []),
     [room?.roasts]
@@ -283,9 +291,10 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const toastTranslate = useRef(new Animated.Value(-100)).current;
   const lastRoastSeqRef = useRef(0);
   const lastRoomRoastLenRef = useRef(0);
-  const lastToastTextRef = useRef('');
+  const prevChallengeRef = useRef(null);
   const prevRecipeRef = useRef(null);
   const prevStatusRef = useRef(null);
+  const challengeLoadedRef = useRef(false);
   const hasGeneratedRecipeRef = useRef('');
   const [toastText, setToastText] = useState('');
   const [selfId, setSelfId] = useState(playerId || null);
@@ -306,6 +315,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const isCompetitorRef = useRef(isCompetitor);
   const setSessionRecipeRef = useRef(setSessionRecipe);
   const powerInventorySigRef = useRef('');
+  const kitchenChallengeRef = useRef(kitchenChallenge);
 
   roomRef.current = room;
   updateRoomRef.current = updateRoom;
@@ -317,17 +327,14 @@ export default function CookingChallengeScreen({ route, navigation }) {
   initialTotalSecondsRef.current = initialTotalSeconds;
   isCompetitorRef.current = isCompetitor;
   setSessionRecipeRef.current = setSessionRecipe;
+  kitchenChallengeRef.current = kitchenChallenge;
 
   useEffect(() => {
-    console.log('[COOKING EFFECT 1 RUN]', { hasSelfId: Boolean(selfId) });
     if (selfIdLoadedRef.current || selfId) return undefined;
     selfIdLoadedRef.current = true;
     let mounted = true;
     getPlayerId().then((id) => {
-      if (mounted) {
-        console.log('[COOKING EFFECT 1 WRITE]', 'setSelfId');
-        setSelfId(id);
-      }
+      if (mounted) setSelfId(id);
     });
     return () => {
       mounted = false;
@@ -336,7 +343,6 @@ export default function CookingChallengeScreen({ route, navigation }) {
 
   // Entrance fade
   useEffect(() => {
-    console.log('[COOKING EFFECT 2 RUN]', {});
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 700,
@@ -345,9 +351,67 @@ export default function CookingChallengeScreen({ route, navigation }) {
   }, []);
 
   useEffect(() => {
-    console.log('[COOKING TARGET EFFECT 1 RUN]', {
-      hasPowerInventoryParam: Boolean(route.params?.powerInventory),
+    let cancelled = false;
+    console.log('[EFFECT RUN]', 'CookingChallengeScreen', 'challenge load', {
+      challengeCuisine: room?.challenge?.cuisineType || '',
+      sessionKey,
+      kitchenChallengeKey: kitchenChallengeKey || '',
     });
+    if (challengeLoadedRef.current && !room?.challenge) return;
+    if (room?.challenge) challengeLoadedRef.current = true;
+    const roomChallenge = room?.challenge;
+    if (roomChallenge?.cuisineType) {
+      if (prevChallengeRef.current === roomChallenge) return () => {};
+      prevChallengeRef.current = roomChallenge;
+      setPrompt({
+        emoji: '🍳',
+        title: roomChallenge.cuisineType,
+        description: `Budget $${roomChallenge.budget} · ${roomChallenge.skillLevel} · ${roomChallenge.cookTimeTarget} min`,
+      });
+      setIsLoadingPrompt(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const getFallbackPrompt = () =>
+      COOKING_PROMPTS[Math.floor(Math.random() * COOKING_PROMPTS.length)];
+
+    const loadPrompt = async () => {
+      if (kitchenChallengeRef.current && kitchenChallengeKey === sessionKey) {
+        if (!cancelled) {
+          setPrompt(kitchenChallengeRef.current);
+          setIsLoadingPrompt(false);
+        }
+        return;
+      }
+      try {
+        const generatedPrompt = await fetchChallengePrompt({ cuisineType, budget, skillLevel });
+        if (!cancelled) {
+          setPrompt(generatedPrompt);
+          setKitchenChallenge(generatedPrompt, sessionKey);
+        }
+      } catch {
+        if (!cancelled) {
+          const fb = getFallbackPrompt();
+          setPrompt(fb);
+          setKitchenChallenge(fb, sessionKey);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingPrompt(false);
+        }
+      }
+    };
+
+    loadPrompt();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cuisineType, budget, skillLevel, kitchenChallengeKey, sessionKey, setKitchenChallenge, room?.challenge?.cuisineType]);
+
+  useEffect(() => {
     const nextInventory = normalizePowerInventory(route.params?.powerInventory);
     const nextSig = JSON.stringify(nextInventory);
     if (powerInventorySigRef.current === nextSig) return;
@@ -356,23 +420,15 @@ export default function CookingChallengeScreen({ route, navigation }) {
       nextSig,
     });
     powerInventorySigRef.current = nextSig;
-    console.log('[COOKING TARGET EFFECT 1 WRITE]', 'setPowerInventory');
     setPowerInventory(nextInventory);
   }, [route.params?.powerInventory]);
 
   // Competitors: live anonymous roasts as top toast
   useEffect(() => {
-    console.log('[COOKING TARGET EFFECT 2 RUN]', {
-      role,
-      liveRoastSeq,
-    });
     if (role !== 'COMPETITOR') return;
     if (!liveRoastSeq || liveRoastSeq === lastRoastSeqRef.current) return;
     lastRoastSeqRef.current = liveRoastSeq;
     const msg = liveRoast?.text?.trim() || 'Fresh roast incoming!';
-    if (lastToastTextRef.current === msg) return;
-    lastToastTextRef.current = msg;
-    console.log('[COOKING TARGET EFFECT 2 WRITE]', 'setToastText');
     setToastText(msg);
     toastTranslate.setValue(-100);
     toastOpacity.setValue(0);
@@ -390,19 +446,12 @@ export default function CookingChallengeScreen({ route, navigation }) {
   }, [liveRoastSeq, role, liveRoast, toastOpacity, toastTranslate]);
 
   useEffect(() => {
-    console.log('[COOKING TARGET EFFECT 3 RUN]', {
-      role,
-      roomRoastsSig,
-    });
     if (role !== 'COMPETITOR') return;
     const roasts = room?.roasts || [];
     if (!roasts.length || roasts.length === lastRoomRoastLenRef.current) return;
     lastRoomRoastLenRef.current = roasts.length;
     const newest = roasts[roasts.length - 1];
     if (!newest?.text) return;
-    if (lastToastTextRef.current === newest.text) return;
-    lastToastTextRef.current = newest.text;
-    console.log('[COOKING TARGET EFFECT 3 WRITE]', 'setToastText');
     setToastText(newest.text);
     toastTranslate.setValue(-100);
     toastOpacity.setValue(0);
@@ -420,77 +469,30 @@ export default function CookingChallengeScreen({ route, navigation }) {
   }, [roomRoastsSig, role, toastOpacity, toastTranslate]);
 
   // Claude: personalized recipe + cook time for this challenge
-  const challengeCuisine = room?.challenge?.cuisineType || cuisineType || '';
-  const challengeBudget = room?.challenge?.budget ?? budget ?? 0;
-  const challengeSkill = room?.challenge?.skillLevel || skillLevel || 'Intermediate';
   useEffect(() => {
-    console.log('[COOKING EFFECT 6 RUN]', {
+    console.log('[EFFECT RUN]', 'CookingChallengeScreen', 'recipe generation', {
+      promptTitle: prompt?.title || '',
       challengeKey,
       hasRoomRecipe,
-      isCompetitor,
-      challengeCuisine,
-      challengeBudget,
-      challengeSkill,
     });
-    const roomValue = roomRef.current;
-    const roomChallenge = roomValue?.challenge;
-    const derivedPrompt = roomChallenge?.cuisineType
-      ? {
-          emoji: '🍳',
-          title: roomChallenge.cuisineType,
-          description: `Budget $${roomChallenge.budget} · ${roomChallenge.skillLevel} · ${roomChallenge.cookTimeTarget} min`,
-        }
-      : challengeCuisine
-        ? {
-            emoji: '🍳',
-            title: challengeCuisine,
-            description: `Budget $${challengeBudget} · ${challengeSkill} · ${cookTimeTargetMinutes} min`,
-          }
-        : COOKING_PROMPTS[0];
-    if (derivedPrompt?.title) {
-      setPrompt((prev) => {
-        if (
-          prev?.title === derivedPrompt.title &&
-          prev?.description === derivedPrompt.description &&
-          prev?.emoji === derivedPrompt.emoji
-        ) {
-          return prev;
-        }
-        console.log('[COOKING EFFECT 6 WRITE]', 'setPrompt');
-        return derivedPrompt;
-      });
-      console.log('[COOKING EFFECT 6 WRITE]', 'setIsLoadingPrompt');
-      setIsLoadingPrompt(false);
+    if (!prompt?.title) {
+      return;
     }
+    const roomValue = roomRef.current;
     if (hasRoomRecipe && roomValue?.recipe) {
       if (prevRecipeRef.current === roomValue.recipe) return;
       prevRecipeRef.current = roomValue.recipe;
       const remote = roomValue.recipe;
       const computedSeconds = (Number(remote.cookTime) || 20) * 60;
-      console.log('[COOKING EFFECT 6 WRITE]', 'setTotalSeconds');
-      setTotalSeconds((prev) => (prev === computedSeconds ? prev : computedSeconds));
+      setTotalSeconds(computedSeconds);
       if (typeof route.params?.secondsLeft !== 'number') {
-        console.log('[COOKING EFFECT 6 WRITE]', 'setSecondsLeft');
-        setSecondsLeft((prev) => (prev === computedSeconds ? prev : computedSeconds));
+        setSecondsLeft(computedSeconds);
       }
-      console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeDishName');
-      setRecipeDishName((prev) => (prev === (remote.dishName || '') ? prev : (remote.dishName || '')));
-      console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeIngredients');
-      setRecipeIngredients((prev) => {
-        const next = remote.ingredients || [];
-        return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
-      });
-      console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeSteps');
-      setRecipeSteps((prev) => {
-        const next = remote.steps || [];
-        return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
-      });
-      console.log('[COOKING EFFECT 6 WRITE]', 'setLoadingRecipeSteps');
+      setRecipeDishName(remote.dishName || '');
+      setRecipeIngredients(remote.ingredients || []);
+      setRecipeSteps(remote.steps || []);
       setLoadingRecipeSteps(false);
-      if (isCompetitor) {
-        console.log('[COOKING EFFECT 6 WRITE]', 'setIsRunning');
-        setIsRunning(true);
-      }
+      if (isCompetitor) setIsRunning(true);
       return;
     }
     if (roomValue && !isHostPlayerRef.current) {
@@ -543,9 +545,8 @@ export default function CookingChallengeScreen({ route, navigation }) {
     const loadRecipe = async () => {
       const currentCuisineType = cuisineTypeRef.current;
       const currentBudget = budgetRef.current;
-      console.log('[COOKING EFFECT 6 WRITE]', 'setLoadingRecipeSteps');
       setLoadingRecipeSteps(true);
-      const challengeTitle = derivedPrompt?.title || 'Kitchen Gauntlet';
+      const challengeTitle = prompt.title;
       try {
         let text = await callClaude(false);
         let parsed = parseRecipeFromClaude(text);
@@ -556,20 +557,13 @@ export default function CookingChallengeScreen({ route, navigation }) {
         const { cookTime, dishName, ingredients, steps, estimatedCost } = parsed;
         if (!cancelled && ingredients.length && steps.length >= 4) {
           const computedSeconds = cookTime * 60;
-          console.log('[COOKING EFFECT 6 WRITE]', 'setTotalSeconds');
-          setTotalSeconds((prev) => (prev === computedSeconds ? prev : computedSeconds));
+          setTotalSeconds(computedSeconds);
           if (typeof route.params?.secondsLeft !== 'number') {
-            console.log('[COOKING EFFECT 6 WRITE]', 'setSecondsLeft');
-            setSecondsLeft((prev) => (prev === computedSeconds ? prev : computedSeconds));
+            setSecondsLeft(computedSeconds);
           }
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeDishName');
-          setRecipeDishName((prev) => (prev === dishName ? prev : dishName));
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeIngredients');
-          setRecipeIngredients((prev) =>
-            JSON.stringify(prev) === JSON.stringify(ingredients) ? prev : ingredients
-          );
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeSteps');
-          setRecipeSteps((prev) => (JSON.stringify(prev) === JSON.stringify(steps) ? prev : steps));
+          setRecipeDishName(dishName);
+          setRecipeIngredients(ingredients);
+          setRecipeSteps(steps);
           const nextRecipe = {
             dishName,
             ingredients,
@@ -578,7 +572,6 @@ export default function CookingChallengeScreen({ route, navigation }) {
             challengeTitle,
             ...(estimatedCost != null ? { estimatedCost } : {}),
           };
-          console.log('[COOKING EFFECT 6 WRITE]', 'setSessionRecipe');
           setSessionRecipeRef.current(nextRecipe);
           if (roomRef.current) {
             try {
@@ -590,21 +583,13 @@ export default function CookingChallengeScreen({ route, navigation }) {
         } else if (!cancelled) {
           const fb = fallbackRecipe(challengeTitle, currentCuisineType, currentBudget);
           const computedSeconds = fb.cookTime * 60;
-          console.log('[COOKING EFFECT 6 WRITE]', 'setTotalSeconds');
-          setTotalSeconds((prev) => (prev === computedSeconds ? prev : computedSeconds));
+          setTotalSeconds(computedSeconds);
           if (typeof route.params?.secondsLeft !== 'number') {
-            console.log('[COOKING EFFECT 6 WRITE]', 'setSecondsLeft');
-            setSecondsLeft((prev) => (prev === computedSeconds ? prev : computedSeconds));
+            setSecondsLeft(computedSeconds);
           }
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeDishName');
-          setRecipeDishName((prev) => (prev === fb.dishName ? prev : fb.dishName));
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeIngredients');
-          setRecipeIngredients((prev) =>
-            JSON.stringify(prev) === JSON.stringify(fb.ingredients) ? prev : fb.ingredients
-          );
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeSteps');
-          setRecipeSteps((prev) => (JSON.stringify(prev) === JSON.stringify(fb.steps) ? prev : fb.steps));
-          console.log('[COOKING EFFECT 6 WRITE]', 'setSessionRecipe');
+          setRecipeDishName(fb.dishName);
+          setRecipeIngredients(fb.ingredients);
+          setRecipeSteps(fb.steps);
           setSessionRecipeRef.current({
             dishName: fb.dishName,
             ingredients: fb.ingredients,
@@ -617,21 +602,13 @@ export default function CookingChallengeScreen({ route, navigation }) {
         if (!cancelled) {
           const fb = fallbackRecipe(challengeTitle, currentCuisineType, currentBudget);
           const computedSeconds = fb.cookTime * 60;
-          console.log('[COOKING EFFECT 6 WRITE]', 'setTotalSeconds');
-          setTotalSeconds((prev) => (prev === computedSeconds ? prev : computedSeconds));
+          setTotalSeconds(computedSeconds);
           if (typeof route.params?.secondsLeft !== 'number') {
-            console.log('[COOKING EFFECT 6 WRITE]', 'setSecondsLeft');
-            setSecondsLeft((prev) => (prev === computedSeconds ? prev : computedSeconds));
+            setSecondsLeft(computedSeconds);
           }
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeDishName');
-          setRecipeDishName((prev) => (prev === fb.dishName ? prev : fb.dishName));
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeIngredients');
-          setRecipeIngredients((prev) =>
-            JSON.stringify(prev) === JSON.stringify(fb.ingredients) ? prev : fb.ingredients
-          );
-          console.log('[COOKING EFFECT 6 WRITE]', 'setRecipeSteps');
-          setRecipeSteps((prev) => (JSON.stringify(prev) === JSON.stringify(fb.steps) ? prev : fb.steps));
-          console.log('[COOKING EFFECT 6 WRITE]', 'setSessionRecipe');
+          setRecipeDishName(fb.dishName);
+          setRecipeIngredients(fb.ingredients);
+          setRecipeSteps(fb.steps);
           setSessionRecipeRef.current({
             dishName: fb.dishName,
             ingredients: fb.ingredients,
@@ -642,10 +619,8 @@ export default function CookingChallengeScreen({ route, navigation }) {
         }
       } finally {
         if (!cancelled) {
-          console.log('[COOKING EFFECT 6 WRITE]', 'setLoadingRecipeSteps');
           setLoadingRecipeSteps(false);
           if (isCompetitorRef.current) {
-            console.log('[COOKING EFFECT 6 WRITE]', 'setIsRunning');
             setIsRunning(true);
           }
         }
@@ -656,20 +631,17 @@ export default function CookingChallengeScreen({ route, navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [challengeCuisine, challengeBudget, challengeSkill, challengeKey, hasRoomRecipe, isCompetitor]);
+  }, [prompt?.title, challengeKey, hasRoomRecipe, isCompetitor]);
 
   const roomStatus = room?.status;
   useEffect(() => {
-    console.log('[COOKING EFFECT 7 RUN]', { roomStatus: roomStatus || '' });
     console.log('[EFFECT RUN]', 'CookingChallengeScreen', 'status navigation', {
       roomStatus: roomStatus || '',
     });
     if (!roomStatus) return;
-    if (roomStatus === 'setup' || roomStatus === 'waiting') return;
     if (prevStatusRef.current === roomStatus) return;
     prevStatusRef.current = roomStatus;
     if (roomStatus === 'voting') {
-      console.log('[COOKING EFFECT 7 NAV]', 'VotingScreen');
       navigation.replace('VotingScreen', {
         playerName,
         gameCode,
@@ -682,58 +654,30 @@ export default function CookingChallengeScreen({ route, navigation }) {
         cookTimeTarget: cookTimeTargetMinutes,
         playerId: selfId,
       });
-    } else if (roomStatus === 'results') {
-      console.log('[COOKING EFFECT 7 NAV]', 'ResultsScreen');
-      navigation.replace('ResultsScreen', {
-        playerName,
-        gameCode,
-        playerId: selfId,
-      });
-    } else if (roomStatus === 'sabotage') {
-      console.log('[COOKING EFFECT 7 NAV]', 'Sabotage');
-      navigation.navigate('Sabotage', {
-        ...route.params,
-        playerId: selfId,
-      });
     }
   }, [roomStatus, navigation]);
 
   // Restore timer when returning (e.g. from Sabotage) with updated params
   useEffect(() => {
-    console.log('[COOKING TARGET EFFECT 4 RUN]', { secondsLeftParam: route.params?.secondsLeft });
     const s = route.params?.secondsLeft;
     if (typeof s !== 'number' || Number.isNaN(s)) return;
-    if (s === secondsLeft) return;
-    console.log('[COOKING TARGET EFFECT 4 WRITE]', 'setSecondsLeft');
     setSecondsLeft(s);
   }, [route.params?.secondsLeft]);
   useEffect(() => {
-    console.log('[COOKING TARGET EFFECT 5 RUN]', { totalSecondsParam: route.params?.totalSeconds });
     const t = route.params?.totalSeconds;
     if (typeof t !== 'number' || Number.isNaN(t)) return;
-    if (t === totalSeconds) return;
-    console.log('[COOKING TARGET EFFECT 5 WRITE]', 'setTotalSeconds');
     setTotalSeconds(t);
-  }, [route.params?.totalSeconds, totalSeconds]);
+  }, [route.params?.totalSeconds]);
 
   // Countdown (paused while this screen is not focused so time does not drain on Sabotage)
   useEffect(() => {
-    console.log('[COOKING TARGET EFFECT 6 RUN]', {
-      isFocused,
-      isRunning,
-      finished,
-      isCompetitor,
-    });
     if (!isCompetitor) return undefined;
     if (isFocused && isRunning && !finished) {
-      clearInterval(intervalRef.current);
       intervalRef.current = setInterval(() => {
         setSecondsLeft((prev) => {
           if (prev <= 1) {
             clearInterval(intervalRef.current);
-            console.log('[COOKING TARGET EFFECT 6 WRITE]', 'setFinished');
             setFinished(true);
-            console.log('[COOKING TARGET EFFECT 6 WRITE]', 'setIsRunning');
             setIsRunning(false);
             return 0;
           }
@@ -746,10 +690,6 @@ export default function CookingChallengeScreen({ route, navigation }) {
 
   // Pulse when under 60 seconds
   useEffect(() => {
-    console.log('[COOKING EFFECT 11 RUN]', {
-      under60: secondsLeft <= 60,
-      finished,
-    });
     if (secondsLeft <= 60 && !finished) {
       const pulse = Animated.loop(
         Animated.sequence([

@@ -29,11 +29,6 @@ import BettingScreen from './src/screens/BettingScreen';
 import VotingScreen from './src/screens/VotingScreen';
 import FunniestRoastVoteScreen from './src/screens/FunniestRoastVoteScreen';
 import RoastSendModalScreen from './src/screens/RoastSendModalScreen';
-import WaitingRoomLite from './src/screens/WaitingRoomLite';
-import SetupLite from './src/screens/SetupLite';
-import CookingLite from './src/screens/CookingLite';
-import VotingLite from './src/screens/VotingLite';
-import ResultsLite from './src/screens/ResultsLite';
 
 const Stack = createNativeStackNavigator();
 let globalTypographyInitialized = false;
@@ -67,13 +62,12 @@ export default function App() {
     globalTypographyInitialized = true;
   }
 
-  // TEMP DISABLED FOR LOOP ISOLATION
-  if (false && !logBoxConfigured) {
+  if (!logBoxConfigured) {
+    console.log('[ROOT EFFECT RUN]', 'App.js', 'configure LogBox');
     LogBox.ignoreAllLogs(false);
     logBoxConfigured = true;
   }
-  // TEMP DISABLED FOR LOOP ISOLATION
-  if (false && __DEV__ && !maxDepthConsolePatched) {
+  if (__DEV__ && !maxDepthConsolePatched) {
     const origError = console.error;
     console.error = (...args) => {
       const msg = args[0]?.toString?.() || '';
@@ -116,11 +110,6 @@ export default function App() {
             <Stack.Screen name="Betting" component={BettingScreen} />
             <Stack.Screen name="VotingScreen" component={VotingScreen} />
             <Stack.Screen name="FunniestRoastVote" component={FunniestRoastVoteScreen} />
-            <Stack.Screen name="WaitingRoomLite" component={WaitingRoomLite} />
-            <Stack.Screen name="SetupLite" component={SetupLite} />
-            <Stack.Screen name="CookingLite" component={CookingLite} />
-            <Stack.Screen name="VotingLite" component={VotingLite} />
-            <Stack.Screen name="ResultsLite" component={ResultsLite} />
             <Stack.Screen
               name="RoastSendModal"
               component={RoastSendModalScreen}

@@ -83,7 +83,7 @@ export default function HomeScreen({ route, navigation }) {
   const handleStartGame = async () => {
     const playerId = await getPlayerId();
     console.log('[HomeScreen] START GAME using displayed gameCode:', createdGameCode);
-    navigation.navigate('WaitingRoomLite', {
+    navigation.navigate('Setup', {
       playerName: resolvedName,
       gameCode: createdGameCode,
       isHost: true,
@@ -118,7 +118,7 @@ export default function HomeScreen({ route, navigation }) {
         room = await findRoomByCode(code);
       }
       if (!room) {
-        navigation.navigate('WaitingRoomLite', {
+        navigation.navigate('Setup', {
           playerName: resolvedName,
           gameCode: code,
           isHost: false,
@@ -128,7 +128,7 @@ export default function HomeScreen({ route, navigation }) {
       }
       const playerId = await getPlayerId();
       console.log('[HomeScreen] joinRoom resolved gameCode:', room.gameCode || code);
-      navigation.navigate('WaitingRoomLite', {
+      navigation.navigate('RoleAssignment', {
         playerName: resolvedName,
         gameCode: code,
         isHost: false,

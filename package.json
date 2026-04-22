@@ -13,6 +13,7 @@
     "@expo-google-fonts/fredoka-one": "^0.2.3",
     "@expo-google-fonts/titan-one": "^0.4.1",
     "@expo/metro-runtime": "~6.1.2",
+    "@expo/ngrok": "^4.1.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native/virtualized-lists": "^0.84.1",
     "@react-navigation/native": "^6.1.18",
