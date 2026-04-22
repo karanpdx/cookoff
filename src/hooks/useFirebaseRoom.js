@@ -200,6 +200,31 @@ export function useFirebaseRoom() {
     });
   }, []);
 
+  const upvoteRoast = useCallback(async (gameCode, roastId, voterId) => {
+    const code = String(gameCode || '').trim();
+    if (!code) return;
+    const roomRef = doc(db, 'rooms', code);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(roomRef);
+      if (!snap.exists()) return;
+      const room = snap.data();
+      const roasts = Array.isArray(room.roasts) ? room.roasts : [];
+      const idx = roasts.findIndex((r) => r.id === roastId);
+      if (idx < 0) return;
+      const target = roasts[idx] || {};
+      const votesBy = { ...(target.votesBy || {}) };
+      if (voterId && votesBy[voterId]) return;
+      if (voterId) votesBy[voterId] = true;
+      const next = [...roasts];
+      next[idx] = {
+        ...target,
+        votes: (Number(target.votes) || 0) + 1,
+        votesBy,
+      };
+      tx.update(roomRef, { roasts: next });
+    });
+  }, []);
+
   const claimSabotageCard = useCallback(async (gameCode, cardId, playerId) => {
     const code = String(gameCode || '').trim();
     if (!code) throw new Error('Room not found');
@@ -238,6 +263,7 @@ export function useFirebaseRoom() {
       submitVote,
       submitJudgeScore,
       addRoast,
+      upvoteRoast,
       claimSabotageCard,
       findRoomByCode,
     }),
@@ -250,6 +276,7 @@ export function useFirebaseRoom() {
       submitVote,
       submitJudgeScore,
       addRoast,
+      upvoteRoast,
       claimSabotageCard,
       findRoomByCode,
     ]

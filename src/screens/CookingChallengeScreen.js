@@ -243,7 +243,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
     playerId,
   } = params;
   const { room, updateRoom } = useRoomSync(gameCode);
-  const { getPlayerId } = useFirebaseRoom();
+  const { getPlayerId, upvoteRoast } = useFirebaseRoom();
   const {
     liveRoast,
     liveRoastSeq,
@@ -282,6 +282,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTranslate = useRef(new Animated.Value(-100)).current;
   const lastRoastSeqRef = useRef(0);
+  const lastRoomRoastLenRef = useRef(0);
   const [toastText, setToastText] = useState('');
   const [selfId, setSelfId] = useState(playerId || null);
 
@@ -395,6 +396,29 @@ export default function CookingChallengeScreen({ route, navigation }) {
       ]),
     ]).start();
   }, [liveRoastSeq, role, liveRoast, toastOpacity, toastTranslate]);
+
+  useEffect(() => {
+    if (role !== 'COMPETITOR') return;
+    const roasts = room?.roasts || [];
+    if (!roasts.length || roasts.length === lastRoomRoastLenRef.current) return;
+    lastRoomRoastLenRef.current = roasts.length;
+    const newest = roasts[roasts.length - 1];
+    if (!newest?.text) return;
+    setToastText(newest.text);
+    toastTranslate.setValue(-100);
+    toastOpacity.setValue(0);
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(toastOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.spring(toastTranslate, { toValue: 0, useNativeDriver: true, friction: 8 }),
+      ]),
+      Animated.delay(3400),
+      Animated.parallel([
+        Animated.timing(toastOpacity, { toValue: 0, duration: 280, useNativeDriver: true }),
+        Animated.timing(toastTranslate, { toValue: -60, duration: 280, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, [room?.roasts, role, toastOpacity, toastTranslate]);
 
   // Claude: personalized recipe + cook time for this challenge
   useEffect(() => {
@@ -708,12 +732,29 @@ export default function CookingChallengeScreen({ route, navigation }) {
     [powerInventory, role, navigation, route.params, secondsLeft]
   );
 
+  const handleRoastUpvote = useCallback(
+    async (roastId) => {
+      if (isCompetitor) return;
+      if (room && gameCode) {
+        try {
+          await upvoteRoast(gameCode, roastId, selfId || 'anon');
+          return;
+        } catch {
+          // local fallback below
+        }
+      }
+      upvoteCookingRoast(roastId);
+    },
+    [isCompetitor, room, gameCode, upvoteRoast, selfId, upvoteCookingRoast]
+  );
+
   const progressPercent = 1 - secondsLeft / Math.max(1, totalSeconds);
   const isUrgent = secondsLeft <= 60;
   const roleColor = getRoleColor(role);
   const showSabotage = !finished && role === 'COMPETITOR';
   const showPowerUps = role === 'COMPETITOR';
   const powerSlotsEmpty = powerInventory.every((s) => s == null);
+  const roastFeed = Array.isArray(room?.roasts) && room.roasts.length ? room.roasts : cookingRoasts;
 
   if (isLoadingPrompt || !prompt) {
     return (
@@ -864,10 +905,10 @@ export default function CookingChallengeScreen({ route, navigation }) {
             ))}
           </View>
 
-          {cookingRoasts.length > 0 && (
+          {roastFeed.length > 0 && (
             <View style={styles.recipeSection}>
               <Text style={styles.sectionHeading}>LIVE ROAST FEED</Text>
-              {cookingRoasts.slice().reverse().map((r) => (
+              {roastFeed.slice().reverse().map((r) => (
                 <View key={r.id} style={styles.roastRow}>
                   <Text style={styles.roastLine} numberOfLines={3}>
                     {r.text}
@@ -875,7 +916,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
                   <TouchableOpacity
                     style={[styles.roastVoteBtn, isCompetitor && styles.roastVoteBtnDisabled]}
                     disabled={isCompetitor}
-                    onPress={() => (isCompetitor ? null : upvoteCookingRoast(r.id))}
+                    onPress={() => handleRoastUpvote(r.id)}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.roastVoteText}>
@@ -975,7 +1016,7 @@ export default function CookingChallengeScreen({ route, navigation }) {
       {role === 'JUDGE' && (
         <TouchableOpacity
           style={[styles.roastFab, !isCompetitor && styles.roastFabObserver]}
-          onPress={() => navigation.navigate('RoastSendModal')}
+          onPress={() => navigation.navigate('RoastSendModal', route.params)}
           activeOpacity={0.9}
         >
           <Text style={styles.roastFabText}>SEND ROAST 🔥</Text>

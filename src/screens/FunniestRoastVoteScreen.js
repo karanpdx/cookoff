@@ -1,16 +1,47 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PALETTE, ChunkyBtn, CloudBg, DrippyTitle } from '../components/DesignSystem';
+import { PALETTE, ChunkyBtn, ChunkyCard, CloudBg, DrippyTitle } from '../components/DesignSystem';
 import { ScreenBackButton } from '../components/ScreenBackButton';
 import { useGameSession } from '../context/GameSessionContext';
+import { useRoomSync } from '../hooks/useRoomSync';
+import { useFirebaseRoom } from '../hooks/useFirebaseRoom';
 
 export default function FunniestRoastVoteScreen({ route, navigation }) {
-  const { playerName, role } = route.params || {};
+  const { playerName, role, gameCode, playerId } = route.params || {};
+  const { room } = useRoomSync(gameCode);
+  const { getPlayerId, upvoteRoast } = useFirebaseRoom();
   const { cookingRoasts, upvoteCookingRoast } = useGameSession();
+  const [selfId, setSelfId] = React.useState(playerId || null);
   const canUpvote = role !== 'COMPETITOR';
 
-  const sorted = [...cookingRoasts].sort((a, b) => b.votes - a.votes);
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (selfId) return;
+      const id = await getPlayerId();
+      if (mounted) setSelfId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [selfId, getPlayerId]);
+  const handleUpvote = async (roastId) => {
+    if (!canUpvote) return;
+    if (room && gameCode) {
+      try {
+        await upvoteRoast(gameCode, roastId, selfId || 'anon');
+        return;
+      } catch {
+        // local fallback below
+      }
+    }
+    upvoteCookingRoast(roastId);
+  };
+
+
+  const roastSource = Array.isArray(room?.roasts) && room.roasts.length ? room.roasts : cookingRoasts;
+  const sorted = [...roastSource].sort((a, b) => b.votes - a.votes);
   const top = sorted[0];
 
   return (
@@ -19,12 +50,17 @@ export default function FunniestRoastVoteScreen({ route, navigation }) {
       <ScreenBackButton navigation={navigation} />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <DrippyTitle size={30}>Roast Playoffs</DrippyTitle>
-        <Text style={styles.sub}>
-          Upvote the funniest anonymous roast. Winner earns bonus engagement points!
-        </Text>
+        <ChunkyCard style={styles.subCard}>
+          <Text style={styles.sub}>
+            Upvote the funniest anonymous roast. Winner earns bonus engagement points!
+          </Text>
+        </ChunkyCard>
 
         {sorted.length === 0 ? (
-          <Text style={styles.empty}>No roasts yet — judges need to spice it up next round.</Text>
+          <ChunkyCard style={styles.emptyCard}>
+            <Text style={styles.emptyEmoji}>🔥</Text>
+            <Text style={styles.empty}>No roasts yet — judges need to spice it up next round.</Text>
+          </ChunkyCard>
         ) : (
           sorted.map((r) => (
             <View key={r.id} style={styles.card}>
@@ -33,7 +69,7 @@ export default function FunniestRoastVoteScreen({ route, navigation }) {
                 <Text style={styles.votes}>{r.votes} votes</Text>
                 <TouchableOpacity
                   style={[styles.up, !canUpvote && styles.upDisabled]}
-                  onPress={() => (canUpvote ? upvoteCookingRoast(r.id) : null)}
+                  onPress={() => handleUpvote(r.id)}
                   disabled={!canUpvote}
                   activeOpacity={0.85}
                 >
@@ -70,14 +106,17 @@ export default function FunniestRoastVoteScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: PALETTE.sky },
   scroll: { paddingTop: 56, paddingHorizontal: 20, paddingBottom: 40 },
+  subCard: { marginBottom: 16 },
+  emptyCard: { alignItems: 'center', marginBottom: 16 },
+  emptyEmoji: { fontSize: 40, marginBottom: 6 },
   sub: {
     fontFamily: 'Fredoka_600SemiBold',
     fontSize: 15,
     color: PALETTE.espresso,
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 0,
   },
-  empty: { textAlign: 'center', fontFamily: 'Fredoka_600SemiBold', marginVertical: 20 },
+  empty: { textAlign: 'center', fontFamily: 'Fredoka_600SemiBold', color: PALETTE.espresso },
   card: {
     backgroundColor: PALETTE.cream,
     borderWidth: 2,
