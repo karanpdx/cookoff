@@ -392,7 +392,7 @@ const styles = StyleSheet.create({
 
   // ── Bottom content — pulled up to eliminate sky gap ─
   content: {
-    marginTop: -20,
+    marginTop: -38,
     paddingHorizontal: 20,
     paddingBottom: 12,
   },

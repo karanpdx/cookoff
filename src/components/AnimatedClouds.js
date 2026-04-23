@@ -28,17 +28,19 @@ function rand(min, max) {
   return min + Math.random() * (max - min);
 }
 
-export default function AnimatedClouds({ style }) {
+export default function AnimatedClouds({ style, minFrac = 0, maxFrac = 0.35, count = CLOUD_COUNT }) {
   const screen = Dimensions.get('window');
   const clouds = useMemo(() => {
-    const topBand = screen.height * 0.35;
-    return Array.from({ length: CLOUD_COUNT }).map((_, i) => {
+    const bandMin = screen.height * minFrac;
+    const bandMax = screen.height * maxFrac;
+    return Array.from({ length: count }).map((_, i) => {
       const width = rand(90, 150);
       const cloudHeight = width * 0.52;
-      const topMax = Math.max(12, topBand - cloudHeight - 8);
-      const top = rand(8, topMax);
+      const topMin = bandMin + 8;
+      const topMax = Math.max(topMin + 4, bandMax - cloudHeight - 8);
+      const top = rand(topMin, topMax);
       const span = screen.width + width + 160;
-      const slot = span / CLOUD_COUNT;
+      const slot = span / count;
       const baseX = -width - 40 + i * slot + rand(0, slot * 0.45);
       const x = new Animated.Value(baseX);
       const duration = rand(42000, 68000);
@@ -59,7 +61,7 @@ export default function AnimatedClouds({ style }) {
       loop.start();
       return { key: `cloud-${i}`, width, top, x, opacity: 0.5 };
     });
-  }, [screen.height, screen.width]);
+  }, [screen.height, screen.width, minFrac, maxFrac, count]);
 
   return (
     <View style={[styles.container, style]} pointerEvents="none">

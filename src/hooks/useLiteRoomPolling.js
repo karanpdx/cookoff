@@ -69,7 +69,7 @@ export function getLiteRoleBadgeVariant(liteRole) {
 
 /**
  * Deterministic Lite roles: host first, then guests by id.
- * 2 → competitor, judge | 3 → competitor, judge, spectator | 4+ → 1 competitor, 1 judge, rest spectators.
+ * 2 → competitor, judge | 3 → 2 competitors, judge | 4 → 2 competitors, judge, spectator | 5+ → 2 competitors, 2 judges, rest spectators.
  */
 export function playersWithAssignedLiteRoles(players) {
   const list = Array.isArray(players) ? [...players] : [];
@@ -83,16 +83,19 @@ export function playersWithAssignedLiteRoles(players) {
     let liteRole = LITE_ROLE.SPECTATOR;
     if (n < 2) liteRole = LITE_ROLE.COMPETITOR;
     else if (n === 2) liteRole = i === 0 ? LITE_ROLE.COMPETITOR : LITE_ROLE.JUDGE;
-    else if (n === 3) {
-      liteRole =
-        i === 0 ? LITE_ROLE.COMPETITOR : i === 1 ? LITE_ROLE.JUDGE : LITE_ROLE.SPECTATOR;
-    } else {
-      liteRole =
-        i === 0 ? LITE_ROLE.COMPETITOR : i === 1 ? LITE_ROLE.JUDGE : LITE_ROLE.SPECTATOR;
-    }
+    else if (n === 3) liteRole = i === 2 ? LITE_ROLE.JUDGE : LITE_ROLE.COMPETITOR;
+    else if (n === 4) liteRole = i <= 1 ? LITE_ROLE.COMPETITOR : i === 2 ? LITE_ROLE.JUDGE : LITE_ROLE.SPECTATOR;
+    else liteRole = i <= 1 ? LITE_ROLE.COMPETITOR : i <= 3 ? LITE_ROLE.JUDGE : LITE_ROLE.SPECTATOR;
     roleById[p.id] = liteRole;
   });
   return list.map((p) => ({ ...p, liteRole: roleById[p.id] }));
+}
+
+function hasLiteSubmittedDish(player) {
+  if (!player) return false;
+  const dish = String(player?.dishName || '').trim();
+  const photo = String(player?.photoUri || '').trim();
+  return Boolean(dish) || Boolean(photo);
 }
 
 function buildLiteRoundPoints(players) {
@@ -224,6 +227,12 @@ export function useLiteRoomPolling(gameCode, intervalMs = 2000) {
       if (!snap.exists()) return;
       const roomData = snap.data();
       const players = Array.isArray(roomData.players) ? roomData.players : [];
+      const resetPlayers = players.map((p) => ({
+        ...p,
+        dishName: null,
+        photoUri: null,
+        scoreLite: 0,
+      }));
       tx.update(roomRef.current, {
         challenge,
         recipeLite: recipe,
@@ -235,7 +244,8 @@ export function useLiteRoomPolling(gameCode, intervalMs = 2000) {
         litePenaltySecByPlayer: {},
         liteScores: {},
         liteBets: {},
-        litePoints: buildLiteRoundPoints(players),
+        players: resetPlayers,
+        litePoints: buildLiteRoundPoints(resetPlayers),
         liteRoasts: [],
         liteRoastVotes: {},
         funniestRoastLite: null,
@@ -244,7 +254,7 @@ export function useLiteRoomPolling(gameCode, intervalMs = 2000) {
     });
   }, []);
 
-  const submitDishLite = useCallback(async (playerId, dishName, photoUri = null) => {
+  const submitDishLite = useCallback(async (playerId, dishName, photoUri = null, photoBase64 = null) => {
     if (!roomRef.current || !playerId) return;
     console.log('[LITE WRITE]', 'submit dish', { playerId, dishName: dishName || '' });
     await runTransaction(db, async (tx) => {
@@ -254,9 +264,18 @@ export function useLiteRoomPolling(gameCode, intervalMs = 2000) {
       const players = Array.isArray(roomData.players) ? roomData.players : [];
       const me = players.find((p) => p.id === playerId);
       if (me?.liteRole && me.liteRole !== LITE_ROLE.COMPETITOR) return;
+      const nextPhotoBase64 = String(photoBase64 || '').trim() || null;
+      const nextPhotoUri =
+        String(photoUri || '').trim() ||
+        (nextPhotoBase64 ? `data:image/jpeg;base64,${nextPhotoBase64}` : null);
       const nextPlayers = players.map((p) =>
         p.id === playerId
-          ? { ...p, dishName: dishName || p.dishName || 'Untitled Dish', photoUri: photoUri || p.photoUri || null }
+          ? {
+              ...p,
+              dishName: dishName || p.dishName || 'Untitled Dish',
+              photoUri: nextPhotoUri || p.photoUri || null,
+              photoBase64: nextPhotoBase64 || p.photoBase64 || null,
+            }
           : p
       );
       tx.update(roomRef.current, { players: nextPlayers });
@@ -456,6 +475,18 @@ export function useLiteRoomPolling(gameCode, intervalMs = 2000) {
       const roomData = snap.data();
       const players = Array.isArray(roomData.players) ? roomData.players : [];
       const liteScores = roomData.liteScores || {};
+      const judges = players.filter((p) => p?.liteRole === LITE_ROLE.JUDGE);
+      const submittedCompetitorDishes = players.filter(
+        (p) => (!p?.liteRole || p.liteRole === LITE_ROLE.COMPETITOR) && hasLiteSubmittedDish(p)
+      );
+      const judgingComplete = submittedCompetitorDishes.every((target) =>
+        judges.every((judge) => {
+          const raw = liteScores?.[target.id]?.[judge.id];
+          const n = Number(raw);
+          return Number.isInteger(n) && n >= 1 && n <= 10;
+        })
+      );
+      if (!judgingComplete) return;
       const nextPlayers = players.map((p) => {
         if (p?.liteRole && p.liteRole !== LITE_ROLE.COMPETITOR) {
           return { ...p, scoreLite: 0 };

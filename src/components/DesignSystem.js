@@ -614,6 +614,26 @@ export function LiteScreenTitle({ children, style }) {
   return <Text style={[LITE_GAME_STYLES.screenTitle, style]}>{children}</Text>;
 }
 
+export function LiteTopBar({ title, onBack, showBack = true, right }) {
+  return (
+    <View style={liteTopBarStyles.wrap}>
+      <View style={liteTopBarStyles.row}>
+        {showBack ? (
+          <TouchableOpacity onPress={onBack} style={liteTopBarStyles.backBtn} activeOpacity={0.85}>
+            <Text style={liteTopBarStyles.backArrow}>←</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={liteTopBarStyles.backBtnGhost} />
+        )}
+        <Text style={liteTopBarStyles.title} numberOfLines={1}>
+          {title}
+        </Text>
+        <View style={liteTopBarStyles.rightSlot}>{right || null}</View>
+      </View>
+    </View>
+  );
+}
+
 export function LiteSectionCard({ title, children, style }) {
   return (
     <View style={[LITE_GAME_STYLES.sectionCard, style]}>
@@ -779,3 +799,56 @@ export const liteScreenContentStyle = {
 };
 
 export const liteScreenScrollContentStyle = liteScreenContentStyle;
+
+const liteTopBarStyles = StyleSheet.create({
+  wrap: {
+    backgroundColor: LITE_THEME.cardBg,
+    borderWidth: LITE_THEME.borderHeavy,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.14,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  backBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    backgroundColor: LITE_THEME.cardInner,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backBtnGhost: {
+    width: 34,
+    height: 34,
+  },
+  backArrow: {
+    fontFamily: 'Fredoka_700Bold',
+    color: LITE_THEME.textInk,
+    fontSize: 17,
+    lineHeight: 18,
+  },
+  title: {
+    flex: 1,
+    textAlign: 'center',
+    fontFamily: 'TitanOne_400Regular',
+    color: LITE_THEME.titleRed,
+    fontSize: 24,
+  },
+  rightSlot: {
+    minWidth: 34,
+    alignItems: 'flex-end',
+  },
+});

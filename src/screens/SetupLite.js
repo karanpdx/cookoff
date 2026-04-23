@@ -1,21 +1,30 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableOpacity,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   CloudBg,
+  PALETTE,
   LITE_THEME,
-  LiteScreenTitle,
+  LiteTopBar,
   LiteMutedText,
   LiteErrorText,
   LiteSectionCard,
   LiteFieldLabel,
-  liteInputStyle,
   LitePrimaryButton,
   LiteSecondaryButton,
-  LiteCardBody,
   LitePlayerCard,
   LiteBadge,
 } from '../components/DesignSystem';
+import AnimatedClouds from '../components/AnimatedClouds';
 import {
   buildSimpleRecipe,
   useLiteRoomPolling,
@@ -47,6 +56,9 @@ const DEMO_RECIPE = {
     'Taste and plate',
   ],
 };
+
+const SKILL_OPTIONS = ['Beginner', 'Intermediate', 'Expert'];
+const TIME_OPTIONS = ['5', '10', '15', '20', '30'];
 
 export default function SetupLite({ route, navigation }) {
   const { gameCode, playerName = 'Player', playerId, isHost = false } = route.params || {};
@@ -96,6 +108,23 @@ export default function SetupLite({ route, navigation }) {
   }, [aiDraft, room?.liteAiGenerated, room?.challenge, room?.recipeLite]);
 
   const players = useMemo(() => (Array.isArray(room?.players) ? room.players : []), [room?.players]);
+  const selfMeta = useMemo(() => players.find((p) => p.id === playerId) || null, [players, playerId]);
+  const judges = useMemo(() => players.filter((p) => p?.liteRole === 'judge'), [players]);
+  const submittedCompetitorDishes = useMemo(
+    () => players.filter((p) => (!p?.liteRole || p.liteRole === 'competitor') && (p?.dishName || p?.photoUri)),
+    [players]
+  );
+  const liteScores = room?.liteScores || {};
+  const judgingComplete = useMemo(
+    () =>
+      submittedCompetitorDishes.every((target) =>
+        judges.every((judge) => {
+          const n = Number(liteScores?.[target.id]?.[judge.id]);
+          return Number.isInteger(n) && n >= 1 && n <= 10;
+        })
+      ),
+    [submittedCompetitorDishes, judges, liteScores]
+  );
 
   const hostBusy = pendingContinue || generatingAi || loading;
 
@@ -186,9 +215,51 @@ export default function SetupLite({ route, navigation }) {
     setPendingJoinerContinue(false);
   };
 
+  const recoverByPhase = React.useCallback(() => {
+    if (phase === 'setup') return;
+    if (phase === 'cooking') {
+      navigation.replace('CookingLite', { gameCode, playerName, playerId, isHost });
+      return;
+    }
+    if (phase === 'voting') {
+      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
+      return;
+    }
+    if (phase === 'results') {
+      navigation.replace('ResultsLite', { gameCode, playerName, playerId, isHost });
+    }
+  }, [phase, navigation, gameCode, playerName, playerId, isHost]);
+
+  const handleSafeBack = React.useCallback(() => {
+    if (selfMeta?.liteRole === 'judge' && phase === 'voting' && !judgingComplete) {
+      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
+      return;
+    }
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+      return;
+    }
+    recoverByPhase();
+  }, [selfMeta?.liteRole, phase, judgingComplete, navigation, gameCode, playerName, playerId, isHost, recoverByPhase]);
+
+  React.useEffect(() => {
+    if (phase === 'cooking') {
+      navigation.replace('CookingLite', { gameCode, playerName, playerId, isHost });
+      return;
+    }
+    if (phase === 'voting') {
+      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
+      return;
+    }
+    if (phase === 'results') {
+      navigation.replace('ResultsLite', { gameCode, playerName, playerId, isHost });
+    }
+  }, [phase, navigation, gameCode, playerName, playerId, isHost]);
+
   return (
     <SafeAreaView style={styles.safe}>
       <CloudBg />
+      <AnimatedClouds minFrac={0.35} maxFrac={0.92} count={3} />
       <KeyboardAvoidingView
         style={styles.keyboardAvoid}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -197,108 +268,203 @@ export default function SetupLite({ route, navigation }) {
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator
+          showsVerticalScrollIndicator={false}
         >
-        <LiteScreenTitle>Challenge Setup</LiteScreenTitle>
-        {loading && <LiteMutedText>Loading room...</LiteMutedText>}
-        {!!error && <LiteErrorText>Could not load room. Check connection and retry.</LiteErrorText>}
-        {!loading && !room && <LiteMutedText>Room data missing. Retry in a moment.</LiteMutedText>}
-        {!loading && room && players.length > 0 ? (
-          <LiteSectionCard title="Kitchen crew">
-            {players.map((p) => {
-              const roleLabel = getLiteRoleBadgeLabel(p.liteRole);
-              const right =
-                roleLabel || p.isHost ? (
-                  <View style={styles.crewBadges}>
-                    {roleLabel ? (
-                      <LiteBadge label={roleLabel} variant={getLiteRoleBadgeVariant(p.liteRole)} />
-                    ) : null}
-                    {p.isHost ? <LiteBadge label="HOST" variant="host" /> : null}
-                  </View>
-                ) : null;
-              return <LitePlayerCard key={p.id} name={p.name} right={right} />;
-            })}
-          </LiteSectionCard>
-        ) : null}
-        {!isHost ? (
-          <>
-            <LiteSectionCard>
-              <Text style={styles.waitLead}>Host is setting up the challenge...</Text>
-              <LiteCardBody>Grab your ingredients while you wait.</LiteCardBody>
-            </LiteSectionCard>
-            {phase === 'cooking' && (
-              <LiteSecondaryButton
-                onPress={continueAsJoinerToCooking}
-                disabled={pendingJoinerContinue || loading}
-              >
-                {pendingJoinerContinue ? 'Opening...' : 'Continue to Cooking'}
-              </LiteSecondaryButton>
-            )}
-          </>
-        ) : (
-          <LiteSectionCard>
-            <LiteFieldLabel>Cuisine</LiteFieldLabel>
-            <TextInput style={liteInputStyle} value={cuisineType} onChangeText={setCuisineType} />
-            <LiteFieldLabel>Budget</LiteFieldLabel>
-            <TextInput style={liteInputStyle} value={budget} onChangeText={setBudget} keyboardType="number-pad" />
-            <LiteFieldLabel>Skill</LiteFieldLabel>
-            <TextInput style={liteInputStyle} value={skillLevel} onChangeText={setSkillLevel} />
-            <LiteFieldLabel>Cook time (minutes)</LiteFieldLabel>
-            <TextInput
-              style={liteInputStyle}
-              value={cookTimeTarget}
-              onChangeText={setCookTimeTarget}
-              keyboardType="number-pad"
-            />
-            {generatingAi && <LiteMutedText>Generating your challenge...</LiteMutedText>}
-            {!!aiError && <LiteErrorText style={styles.aiError}>{aiError}</LiteErrorText>}
-            {!!aiPreview && !generatingAi && (
-              <View style={styles.aiSuccessRow} accessibilityRole="text">
-                <View style={styles.aiSuccessBadge} accessibilityLabel="Success">
-                  <Text style={styles.aiSuccessCheck}>✓</Text>
-                </View>
-                <Text style={styles.aiSuccessTitle}>AI Challenge Ready</Text>
+          <LiteTopBar
+            title="Challenge Setup"
+            showBack={Boolean(navigation?.canGoBack?.())}
+            onBack={handleSafeBack}
+          />
+
+          {/* Screen subtitle */}
+          <View style={styles.subtitlePill}>
+            <Text style={styles.subtitleText}>Build tonight's culinary battle</Text>
+          </View>
+
+          {loading && <LiteMutedText style={styles.statusMsg}>Loading room…</LiteMutedText>}
+          {!!error && <LiteErrorText style={styles.statusMsg}>Could not load room. Check connection and retry.</LiteErrorText>}
+          {!loading && !room && <LiteMutedText style={styles.statusMsg}>Room data missing. Retry in a moment.</LiteMutedText>}
+
+          {/* Kitchen crew */}
+          {!loading && room && players.length > 0 ? (
+            <View style={styles.crewCard}>
+              <Text style={styles.crewTitle}>Kitchen Crew</Text>
+              {players.map((p) => {
+                const rLabel = getLiteRoleBadgeLabel(p.liteRole);
+                const right =
+                  rLabel || p.isHost ? (
+                    <View style={styles.crewBadges}>
+                      {rLabel ? (
+                        <LiteBadge label={rLabel} variant={getLiteRoleBadgeVariant(p.liteRole)} />
+                      ) : null}
+                      {p.isHost ? <LiteBadge label="HOST" variant="host" /> : null}
+                    </View>
+                  ) : null;
+                return <LitePlayerCard key={p.id} name={p.name} right={right} />;
+              })}
+            </View>
+          ) : null}
+
+          {/* ── Joiner path ── */}
+          {!isHost ? (
+            <>
+              <View style={styles.waitCard}>
+                <Text style={styles.waitEmoji}>👨‍🍳</Text>
+                <Text style={styles.waitLead}>Host is setting up the challenge</Text>
+                <Text style={styles.waitSub}>Grab your ingredients while you wait.</Text>
               </View>
-            )}
-            {!!aiPreview && (
-              <View style={styles.previewCard} accessibilityRole="summary">
-                {aiPreview.challenge?.demoModeLite ? (
-                  <View style={styles.demoModeTagWrap}>
-                    <LiteBadge label="PRESENTATION MODE" variant="host" />
-                  </View>
-                ) : null}
-                <Text style={styles.previewTitle}>{aiPreview.challenge.challengeTitle || 'Challenge'}</Text>
-                {!!aiPreview.challenge.shortDescription && (
-                  <Text style={styles.previewDescription}>{aiPreview.challenge.shortDescription}</Text>
-                )}
-                <View style={styles.previewMetaRow}>
-                  <Text style={styles.previewMetaLabel}>Dish</Text>
-                  <Text style={styles.previewMetaValue}>{aiPreview.recipe.dishName || '—'}</Text>
+              {phase === 'cooking' && (
+                <LiteSecondaryButton
+                  onPress={continueAsJoinerToCooking}
+                  disabled={pendingJoinerContinue || loading}
+                >
+                  {pendingJoinerContinue ? 'Opening…' : 'Continue to Cooking'}
+                </LiteSecondaryButton>
+              )}
+              {selfMeta?.liteRole === 'judge' && phase === 'voting' && !judgingComplete ? (
+                <LitePrimaryButton onPress={() => navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost })}>
+                  Return to Judge's Table
+                </LitePrimaryButton>
+              ) : null}
+            </>
+          ) : (
+            /* ── Host path ── */
+            <>
+              {/* Settings card */}
+              <View style={styles.settingsCard}>
+                {/* Cuisine */}
+                <Text style={styles.fieldLabel}>Cuisine</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={cuisineType}
+                  onChangeText={setCuisineType}
+                  placeholderTextColor={PALETTE.espresso + '55'}
+                  returnKeyType="done"
+                />
+
+                {/* Budget */}
+                <Text style={styles.fieldLabel}>Budget ($)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={budget}
+                  onChangeText={setBudget}
+                  keyboardType="number-pad"
+                  placeholderTextColor={PALETTE.espresso + '55'}
+                  returnKeyType="done"
+                />
+
+                {/* Skill level pills */}
+                <Text style={styles.fieldLabel}>Skill Level</Text>
+                <View style={styles.pillRow}>
+                  {SKILL_OPTIONS.map((opt) => {
+                    const active = skillLevel === opt;
+                    return (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[styles.pill, active && styles.pillActive]}
+                        onPress={() => setSkillLevel(opt)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                          {opt}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                <View style={styles.previewMetaRow}>
-                  <Text style={styles.previewMetaLabel}>Est. cook time</Text>
-                  <Text style={styles.previewMetaValue}>
-                    {typeof aiPreview.recipe.cookTime === 'number'
-                      ? `${aiPreview.recipe.cookTime} min`
-                      : `${aiPreview.recipe.cookTime || '—'}`}
+
+                {/* Cook time chips */}
+                <Text style={styles.fieldLabel}>Cook Time</Text>
+                <View style={styles.chipRow}>
+                  {TIME_OPTIONS.map((t) => {
+                    const active = cookTimeTarget === t;
+                    return (
+                      <TouchableOpacity
+                        key={t}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setCookTimeTarget(t)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                          {t}m
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* AI status */}
+              {generatingAi && (
+                <View style={styles.generatingRow}>
+                  <Text style={styles.generatingText}>Generating your challenge…</Text>
+                </View>
+              )}
+              {!!aiError && <LiteErrorText style={styles.aiError}>{aiError}</LiteErrorText>}
+
+              {/* AI preview */}
+              {!!aiPreview && !generatingAi && (
+                <View style={styles.aiSuccessRow} accessibilityRole="text">
+                  <View style={styles.aiSuccessBadge}>
+                    <Text style={styles.aiSuccessCheck}>✓</Text>
+                  </View>
+                  <Text style={styles.aiSuccessTitle}>
+                    {aiPreview.challenge?.demoModeLite ? 'Demo Challenge Ready' : 'AI Challenge Ready'}
                   </Text>
+                  {aiPreview.challenge?.demoModeLite ? (
+                    <LiteBadge label="DEMO" variant="host" />
+                  ) : null}
+                </View>
+              )}
+              {!!aiPreview && (
+                <View style={styles.previewCard} accessibilityRole="summary">
+                  <Text style={styles.previewTitle}>
+                    {aiPreview.challenge.challengeTitle || 'Challenge'}
+                  </Text>
+                  {!!aiPreview.challenge.shortDescription && (
+                    <Text style={styles.previewDescription}>
+                      {aiPreview.challenge.shortDescription}
+                    </Text>
+                  )}
+                  <View style={styles.previewDivider} />
+                  <View style={styles.previewMetaRow}>
+                    <Text style={styles.previewMetaLabel}>Dish</Text>
+                    <Text style={styles.previewMetaValue}>{aiPreview.recipe.dishName || '—'}</Text>
+                  </View>
+                  <View style={styles.previewMetaRow}>
+                    <Text style={styles.previewMetaLabel}>Cook time</Text>
+                    <Text style={styles.previewMetaValue}>
+                      {typeof aiPreview.recipe.cookTime === 'number'
+                        ? `${aiPreview.recipe.cookTime} min`
+                        : `${aiPreview.recipe.cookTime || '—'}`}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Action buttons */}
+              <View style={styles.actionArea}>
+                <LitePrimaryButton
+                  onPress={generateAiChallenge}
+                  disabled={generatingAi || pendingContinue || loading}
+                >
+                  {generatingAi
+                    ? 'Generating…'
+                    : aiPreview
+                    ? 'Regenerate AI Challenge'
+                    : 'Generate AI Challenge'}
+                </LitePrimaryButton>
+                <LiteSecondaryButton onPress={loadDemoChallenge} disabled={hostBusy}>
+                  Load Demo Challenge
+                </LiteSecondaryButton>
+                <View style={styles.continueRow}>
+                  <LiteSecondaryButton onPress={continueToCooking} disabled={hostBusy}>
+                    {pendingContinue ? 'Saving…' : 'Continue to Cooking →'}
+                  </LiteSecondaryButton>
                 </View>
               </View>
-            )}
-            <LiteSecondaryButton
-              onPress={generateAiChallenge}
-              disabled={generatingAi || pendingContinue || loading}
-            >
-              {generatingAi ? 'Generating...' : aiPreview ? 'Regenerate AI Challenge' : 'Generate AI Challenge'}
-            </LiteSecondaryButton>
-            <LiteSecondaryButton onPress={loadDemoChallenge} disabled={hostBusy}>
-              Load Demo Challenge
-            </LiteSecondaryButton>
-            <LitePrimaryButton onPress={continueToCooking} disabled={hostBusy}>
-              {pendingContinue ? 'Saving...' : 'Continue to Cooking'}
-            </LitePrimaryButton>
-          </LiteSectionCard>
-        )}
+            </>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -306,26 +472,231 @@ export default function SetupLite({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: LITE_THEME.screenBg },
-  keyboardAvoid: { flex: 1 },
-  scroll: { flex: 1 },
+  safe: {
+    flex: 1,
+    backgroundColor: LITE_THEME.screenBg,
+  },
+  keyboardAvoid: {
+    flex: 1,
+  },
+  scroll: {
+    flex: 1,
+  },
   scrollContent: {
-    padding: LITE_THEME.contentPadding,
-    paddingTop: LITE_THEME.contentPaddingTop,
-    paddingBottom: 128,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 140,
+  },
+
+  // ── Subtitle pill ──────────────────────────────────
+  subtitlePill: {
+    alignSelf: 'center',
+    backgroundColor: PALETTE.paper,
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    marginTop: 10,
+    marginBottom: 16,
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  subtitleText: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+    opacity: 0.8,
+  },
+
+  statusMsg: {
+    marginBottom: 10,
+  },
+
+  // ── Kitchen crew card ─────────────────────────────
+  crewCard: {
+    backgroundColor: PALETTE.paper,
+    borderWidth: 3,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 6,
+    marginBottom: 12,
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  crewTitle: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 16,
+    color: LITE_THEME.titleRed,
+    marginBottom: 10,
+  },
+  crewBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+
+  // ── Joiner wait card ──────────────────────────────
+  waitCard: {
+    backgroundColor: PALETTE.paper,
+    borderWidth: 3,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 20,
+    padding: 24,
+    marginBottom: 14,
+    alignItems: 'center',
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  waitEmoji: {
+    fontSize: 40,
+    marginBottom: 10,
   },
   waitLead: {
-    fontFamily: 'Fredoka_700Bold',
-    fontSize: 17,
-    color: LITE_THEME.text,
-    marginBottom: 4,
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 20,
+    color: LITE_THEME.titleRed,
+    textAlign: 'center',
+    marginBottom: 6,
   },
-  aiError: { marginTop: 6, marginBottom: 4 },
+  waitSub: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+    opacity: 0.7,
+    textAlign: 'center',
+  },
+
+  // ── Settings card ─────────────────────────────────
+  settingsCard: {
+    backgroundColor: PALETTE.paper,
+    borderWidth: 3,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 14,
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  fieldLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: PALETTE.espresso,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    opacity: 0.65,
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  textInput: {
+    backgroundColor: LITE_THEME.cardInner,
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 16,
+    color: PALETTE.espresso,
+  },
+
+  // ── Skill pills ───────────────────────────────────
+  pillRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  pill: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 2.5,
+    borderColor: PALETTE.creamEdge,
+    backgroundColor: LITE_THEME.cardInner,
+    alignItems: 'center',
+  },
+  pillActive: {
+    backgroundColor: LITE_THEME.primaryAction,
+    borderColor: PALETTE.espresso,
+  },
+  pillText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: PALETTE.espresso,
+    opacity: 0.6,
+  },
+  pillTextActive: {
+    opacity: 1,
+    color: PALETTE.espresso,
+  },
+
+  // ── Cook time chips ───────────────────────────────
+  chipRow: {
+    flexDirection: 'row',
+    gap: 7,
+  },
+  chip: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
+    backgroundColor: LITE_THEME.cardInner,
+    alignItems: 'center',
+  },
+  chipActive: {
+    backgroundColor: LITE_THEME.primaryAction,
+    borderColor: PALETTE.espresso,
+  },
+  chipText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: PALETTE.espresso,
+    opacity: 0.6,
+  },
+  chipTextActive: {
+    opacity: 1,
+  },
+
+  // ── AI states ─────────────────────────────────────
+  generatingRow: {
+    backgroundColor: PALETTE.paper,
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  generatingText: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+    opacity: 0.7,
+  },
+  aiError: {
+    marginTop: 4,
+    marginBottom: 10,
+  },
   aiSuccessRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 8,
+    marginBottom: 10,
     gap: 10,
   },
   aiSuccessBadge: {
@@ -350,17 +721,24 @@ const styles = StyleSheet.create({
     color: LITE_THEME.textInk,
     flex: 1,
   },
+
+  // ── AI preview card ───────────────────────────────
   previewCard: {
     backgroundColor: LITE_THEME.cardInner,
-    borderRadius: LITE_THEME.radiusMd,
-    borderWidth: LITE_THEME.borderHeavy,
-    borderColor: LITE_THEME.cardBorder,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 16,
+    borderWidth: 3,
+    borderColor: PALETTE.creamEdge,
+    padding: 16,
+    marginBottom: 14,
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.09,
+    shadowRadius: 4,
+    elevation: 2,
   },
   previewTitle: {
-    fontFamily: 'Fredoka_700Bold',
-    fontSize: 17,
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 20,
     color: LITE_THEME.titleRed,
     marginBottom: 6,
   },
@@ -369,7 +747,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: LITE_THEME.text,
     lineHeight: 20,
-    marginBottom: 12,
+    marginBottom: 10,
+  },
+  previewDivider: {
+    height: 2,
+    backgroundColor: PALETTE.creamEdge,
+    borderRadius: 1,
+    marginBottom: 10,
   },
   previewMetaRow: {
     flexDirection: 'row',
@@ -381,7 +765,10 @@ const styles = StyleSheet.create({
     fontFamily: 'Fredoka_700Bold',
     fontSize: 12,
     color: LITE_THEME.textInk,
-    width: 108,
+    width: 88,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    opacity: 0.6,
   },
   previewMetaValue: {
     fontFamily: 'Fredoka_600SemiBold',
@@ -389,6 +776,15 @@ const styles = StyleSheet.create({
     color: LITE_THEME.text,
     flex: 1,
   },
-  demoModeTagWrap: { marginBottom: 8 },
-  crewBadges: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+
+  // ── Action buttons ────────────────────────────────
+  actionArea: {
+    gap: 10,
+  },
+  continueRow: {
+    marginTop: 6,
+    borderTopWidth: 2,
+    borderTopColor: PALETTE.creamEdge,
+    paddingTop: 12,
+  },
 });

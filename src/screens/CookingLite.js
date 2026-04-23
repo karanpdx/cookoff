@@ -1,13 +1,12 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { StyleSheet, TextInput, Image, ScrollView, View, Text } from 'react-native';
+import { StyleSheet, TextInput, Image, ScrollView, View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import {
   CloudBg,
-  LITE_GAME_STYLES,
   LITE_THEME,
-  LiteScreenTitle,
+  LiteTopBar,
   LiteMutedText,
   LiteErrorText,
   LiteSectionCard,
@@ -41,6 +40,24 @@ const TIME_PENALTY_SEC = 30;
 const ROAST_TOAST_MS = 5000;
 const HANGMAN_MAX_WRONG = 6;
 const HANGMAN_FALLBACK_WORD = 'guacamole';
+
+function toSharedDataUri(asset) {
+  const base64 = String(asset?.base64 || '').trim();
+  if (!base64) return null;
+  const ext = String(asset?.fileName || '')
+    .split('.')
+    .pop()
+    .toLowerCase();
+  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+  return `data:${mime};base64,${base64}`;
+}
+
+function hasLiteSubmittedDish(player) {
+  if (!player) return false;
+  const dish = String(player?.dishName || '').trim();
+  const photo = String(player?.photoUri || player?.photoURL || '').trim();
+  return Boolean(dish) || Boolean(photo);
+}
 
 const LITE_SABOTAGE_PRESETS = {
   [LITE_SABOTAGE_TYPE.BLACKOUT]: {
@@ -118,6 +135,7 @@ export default function CookingLite({ route, navigation }) {
   const [pendingSubmitDish, setPendingSubmitDish] = useState(false);
   const [pendingStartVoting, setPendingStartVoting] = useState(false);
   const [photoUri, setPhotoUri] = useState(null);
+  const [photoBase64, setPhotoBase64] = useState(null);
   const roomRef = useRef(room);
 
   const phase = room?.phase || 'cooking';
@@ -131,13 +149,32 @@ export default function CookingLite({ route, navigation }) {
 
   const players = useMemo(() => (Array.isArray(room?.players) ? room.players : []), [room?.players]);
   const liteRoasts = useMemo(() => (Array.isArray(room?.liteRoasts) ? room.liteRoasts : []), [room?.liteRoasts]);
+  const judges = useMemo(() => players.filter((p) => p?.liteRole === 'judge'), [players]);
+  const submittedCompetitorDishes = useMemo(
+    () => players.filter((p) => (!p?.liteRole || p.liteRole === 'competitor') && hasLiteSubmittedDish(p)),
+    [players]
+  );
+  const submittedCompetitorCount = submittedCompetitorDishes.length;
+  const liteScores = room?.liteScores || {};
+  const judgingComplete = useMemo(
+    () =>
+      submittedCompetitorDishes.every((target) =>
+        judges.every((judge) => {
+          const n = Number(liteScores?.[target.id]?.[judge.id]);
+          return Number.isInteger(n) && n >= 1 && n <= 10;
+        })
+      ),
+    [submittedCompetitorDishes, judges, liteScores]
+  );
 
   const canSubmitDish = !selfMeta?.liteRole || selfMeta.liteRole === LITE_ROLE.COMPETITOR;
   const isCompetitorFlow = canSubmitDish;
   const isJudge = selfMeta?.liteRole === LITE_ROLE.JUDGE;
   const isSpectator = selfMeta?.liteRole === LITE_ROLE.SPECTATOR;
+  const hasSubmittedOwnDish = isCompetitorFlow && hasLiteSubmittedDish(selfMeta);
 
   const [pendingJudgeNav, setPendingJudgeNav] = useState(false);
+  const [pendingSpectatorNav, setPendingSpectatorNav] = useState(false);
   const [pendingSabotageKey, setPendingSabotageKey] = useState(null);
   const [pendingBet, setPendingBet] = useState(false);
   const [selectedBetTargetId, setSelectedBetTargetId] = useState(null);
@@ -150,7 +187,7 @@ export default function CookingLite({ route, navigation }) {
   const roastToastQueueRef = useRef([]);
   const roastToastTimerRef = useRef(null);
   const roastToastSeenRef = useRef(new Set());
-  const roastToastInitRef = useRef(false);
+  const roastToastMountedAtRef = useRef(Date.now());
 
   const roleBadgeLabel = useMemo(() => {
     const lr = getLiteRoleBadgeLabel(selfMeta?.liteRole);
@@ -192,6 +229,9 @@ export default function CookingLite({ route, navigation }) {
   }, [timerMood]);
 
   React.useEffect(() => {
+    if (phase === 'setup') {
+      navigation.replace('SetupLite', { gameCode, playerName, playerId, isHost });
+    }
     if (phase === 'voting') {
       navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
     }
@@ -200,17 +240,45 @@ export default function CookingLite({ route, navigation }) {
     }
   }, [phase, navigation, gameCode, playerName, playerId, isHost]);
 
-  React.useEffect(() => {
-    if (!roastToastInitRef.current) {
-      roastToastSeenRef.current = new Set(liteRoasts.map((r) => r.id));
-      roastToastInitRef.current = true;
+  const recoverByPhase = React.useCallback(() => {
+    if (phase === 'cooking') return;
+    if (phase === 'setup') {
+      navigation.replace('SetupLite', { gameCode, playerName, playerId, isHost });
       return;
     }
-    const additions = liteRoasts
-      .filter((r) => r?.id && !roastToastSeenRef.current.has(r.id))
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    if (phase === 'voting') {
+      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
+      return;
+    }
+    if (phase === 'results') {
+      navigation.replace('ResultsLite', { gameCode, playerName, playerId, isHost });
+    }
+  }, [phase, navigation, gameCode, playerName, playerId, isHost]);
+
+  const handleSafeBack = React.useCallback(() => {
+    if (selfMeta?.liteRole === LITE_ROLE.JUDGE && phase === 'voting' && !judgingComplete) {
+      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
+      return;
+    }
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+      return;
+    }
+    recoverByPhase();
+  }, [selfMeta?.liteRole, phase, judgingComplete, navigation, gameCode, playerName, playerId, isHost, recoverByPhase]);
+
+  React.useEffect(() => {
+    const additions = [];
+    [...liteRoasts]
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+      .forEach((r) => {
+        if (!r?.id || roastToastSeenRef.current.has(r.id)) return;
+        roastToastSeenRef.current.add(r.id);
+        if (Number(r.createdAt || 0) >= roastToastMountedAtRef.current) {
+          additions.push(r);
+        }
+      });
     if (additions.length === 0) return;
-    additions.forEach((r) => roastToastSeenRef.current.add(r.id));
     roastToastQueueRef.current.push(...additions);
     if (!activeRoastToast) popNextRoastToast();
   }, [liteRoasts, activeRoastToast, popNextRoastToast]);
@@ -227,33 +295,15 @@ export default function CookingLite({ route, navigation }) {
   }, [activeRoastToast, popNextRoastToast]);
 
   React.useEffect(() => {
-    setHangmanGuessed([]);
-    setHangmanSolvedLocal(false);
-  }, [hangmanWord, room?.phase]);
-
-  React.useEffect(() => {
-    if (!isSpectator || !hangmanSolved || hangmanSolvedLocal || hangmanRewarded || pendingHangmanReward) return;
-    let cancelled = false;
-    setPendingHangmanReward(true);
-    awardLiteHangmanReward(playerId)
-      .then(() => {
-        if (!cancelled) setHangmanSolvedLocal(true);
-      })
-      .finally(() => {
-        if (!cancelled) setPendingHangmanReward(false);
-      });
     return () => {
-      cancelled = true;
+      roastToastQueueRef.current = [];
+      roastToastSeenRef.current = new Set();
+      setActiveRoastToast(null);
+      if (roastToastTimerRef.current) {
+        clearTimeout(roastToastTimerRef.current);
+      }
     };
-  }, [
-    isSpectator,
-    hangmanSolved,
-    hangmanSolvedLocal,
-    hangmanRewarded,
-    pendingHangmanReward,
-    awardLiteHangmanReward,
-    playerId,
-  ]);
+  }, []);
 
   const computeSharedRemainingSec = React.useCallback(() => {
     const r = roomRef.current;
@@ -328,6 +378,35 @@ export default function CookingLite({ route, navigation }) {
   );
 
   React.useEffect(() => {
+    setHangmanGuessed([]);
+    setHangmanSolvedLocal(false);
+  }, [hangmanWord, room?.phase]);
+
+  React.useEffect(() => {
+    if (!isSpectator || !hangmanSolved || hangmanSolvedLocal || hangmanRewarded || pendingHangmanReward) return;
+    let cancelled = false;
+    setPendingHangmanReward(true);
+    awardLiteHangmanReward(playerId)
+      .then(() => {
+        if (!cancelled) setHangmanSolvedLocal(true);
+      })
+      .finally(() => {
+        if (!cancelled) setPendingHangmanReward(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isSpectator,
+    hangmanSolved,
+    hangmanSolvedLocal,
+    hangmanRewarded,
+    pendingHangmanReward,
+    awardLiteHangmanReward,
+    playerId,
+  ]);
+
+  React.useEffect(() => {
     const base = computeSharedRemainingSec();
     setSecondsLeft(Math.max(0, base - playerPenaltySec));
   }, [
@@ -365,11 +444,15 @@ export default function CookingLite({ route, navigation }) {
   const maxSteps = isAiChallenge ? 10 : 5;
 
   const submitDish = async () => {
-    if (!playerId || pendingSubmitDish) return;
+    if (!playerId || pendingSubmitDish || hasSubmittedOwnDish) return;
     setPendingSubmitDish(true);
     try {
-      await submitDishLite(playerId, dishName.trim() || `${playerName}'s Dish`, photoUri);
-      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
+      await submitDishLite(
+        playerId,
+        dishName.trim() || `${playerName}'s Dish`,
+        photoUri,
+        photoBase64
+      );
     } finally {
       setPendingSubmitDish(false);
     }
@@ -380,12 +463,16 @@ export default function CookingLite({ route, navigation }) {
     if (!permission.granted) return;
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
+      quality: 0.35,
       allowsEditing: true,
       aspect: [4, 3],
+      base64: true,
     });
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setPhotoUri(result.assets[0].uri);
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      const sharedDataUri = toSharedDataUri(asset);
+      setPhotoUri(sharedDataUri || asset.uri || null);
+      setPhotoBase64(String(asset.base64 || '').trim() || null);
     }
   };
 
@@ -394,12 +481,16 @@ export default function CookingLite({ route, navigation }) {
     if (!permission.granted) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
+      quality: 0.35,
       allowsEditing: true,
       aspect: [4, 3],
+      base64: true,
     });
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setPhotoUri(result.assets[0].uri);
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      const sharedDataUri = toSharedDataUri(asset);
+      setPhotoUri(sharedDataUri || asset.uri || null);
+      setPhotoBase64(String(asset.base64 || '').trim() || null);
     }
   };
 
@@ -417,9 +508,19 @@ export default function CookingLite({ route, navigation }) {
     if (pendingJudgeNav) return;
     setPendingJudgeNav(true);
     try {
-      navigation.navigate('VotingLite', { gameCode, playerName, playerId, isHost });
+      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
     } finally {
       setPendingJudgeNav(false);
+    }
+  };
+
+  const goToVotingLite = () => {
+    if (pendingSpectatorNav) return;
+    setPendingSpectatorNav(true);
+    try {
+      navigation.replace('VotingLite', { gameCode, playerName, playerId, isHost });
+    } finally {
+      setPendingSpectatorNav(false);
     }
   };
 
@@ -485,30 +586,48 @@ export default function CookingLite({ route, navigation }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.titleBlock}>
-          <LiteScreenTitle style={styles.heroTitle}>Cook Off 🔥</LiteScreenTitle>
-          <View style={styles.roleRow}>
+        {/* Top bar with role badge */}
+        <LiteTopBar
+          title="Cook Off"
+          showBack={Boolean(navigation?.canGoBack?.())}
+          onBack={handleSafeBack}
+          right={
             <LiteBadge
               label={roleBadgeLabel}
               variant={
                 selfMeta?.liteRole ? getLiteRoleBadgeVariant(selfMeta.liteRole) : isHost ? 'host' : 'default'
               }
             />
-            <Text style={styles.playerTag}>{playerName}</Text>
-          </View>
+          }
+        />
+
+        {/* Player name row — points shown inline for judge/spectator */}
+        <View style={styles.playerNameRow}>
+          <Text style={styles.playerNameTag}>{playerName}</Text>
+          {(isJudge || isSpectator) ? (
+            <View style={styles.myPointsPill}>
+              <Text style={styles.myPointsText}>🪙 {myPoints} pts</Text>
+            </View>
+          ) : null}
         </View>
+
         {loading && <LiteMutedText>Loading room...</LiteMutedText>}
         {!!error && <LiteErrorText>Could not load room. Check connection and retry.</LiteErrorText>}
         {!loading && !room && <LiteMutedText>Room data missing. Retry in a moment.</LiteMutedText>}
 
-        <View style={[styles.heroTimerShell, { borderColor: heroBorderColor }]}>
-          <LinearGradient colors={heroGradient} style={styles.heroTimerGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-            <Text style={styles.timerEyebrow}>Kitchen Timer</Text>
-            <Text style={[styles.timerHero, { color: timerColor }]}>{timerText}</Text>
-            {timerHint ? <Text style={styles.timerHint}>{timerHint}</Text> : null}
-          </LinearGradient>
+        {/* ── Timer hero ── */}
+        <View style={styles.heroTimerOuter}>
+          <View style={styles.heroTimerShadow} />
+          <View style={[styles.heroTimerShell, { borderColor: heroBorderColor }]}>
+            <LinearGradient colors={heroGradient} style={styles.heroTimerGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+              <Text style={styles.timerEyebrow}>⏱  KITCHEN TIMER</Text>
+              <Text style={[styles.timerHero, { color: timerColor }]}>{timerText}</Text>
+              {timerHint ? <Text style={[styles.timerHint, { color: timerColor }]}>{timerHint}</Text> : null}
+            </LinearGradient>
+          </View>
         </View>
 
+        {/* Challenge pills */}
         {challenge ? (
           <View style={styles.challengePillRow}>
             <View style={styles.challengePill}>
@@ -526,6 +645,7 @@ export default function CookingLite({ route, navigation }) {
           </View>
         ) : null}
 
+        {/* AI challenge title banner */}
         {(challenge?.challengeTitle || challenge?.shortDescription) ? (
           <View style={styles.aiChallengeBanner}>
             {challenge?.demoModeLite ? (
@@ -542,8 +662,9 @@ export default function CookingLite({ route, navigation }) {
           </View>
         ) : null}
 
+        {/* Kitchen crew */}
         {players.length > 0 ? (
-          <LiteSectionCard title="Kitchen crew" style={styles.crewCard}>
+          <LiteSectionCard title="Kitchen Crew" style={styles.crewCard}>
             {players.map((p) => {
               const rl = getLiteRoleBadgeLabel(p.liteRole);
               const right =
@@ -558,9 +679,10 @@ export default function CookingLite({ route, navigation }) {
           </LiteSectionCard>
         ) : null}
 
+        {/* Sabotage alert (competitor view) */}
         {isCompetitorFlow && sabotageAlive && activeSabotage ? (
           <View style={styles.sabotageBanner} accessibilityRole="alert">
-            <Text style={styles.sabotageBannerTitle}>{activeSabotage.label || 'Sabotage'}</Text>
+            <Text style={styles.sabotageBannerTitle}>⚡  {activeSabotage.label || 'Sabotage'}</Text>
             <Text style={styles.sabotageBannerBody}>
               {activeSabotage.type === LITE_SABOTAGE_TYPE.BLACKOUT
                 ? 'The recipe card is hidden temporarily — stay sharp from memory!'
@@ -575,12 +697,7 @@ export default function CookingLite({ route, navigation }) {
           </View>
         ) : null}
 
-        {(isJudge || isSpectator) ? (
-          <LiteSectionCard title="Points" style={styles.pointsCard}>
-            <LiteCardBody style={styles.pointsText}>Current points: {myPoints}</LiteCardBody>
-          </LiteSectionCard>
-        ) : null}
-
+        {/* Recipe card */}
         {hideRecipeForCompetitorBlackout ? null : (
           <LiteSectionCard style={styles.recipeCard}>
             <View style={styles.recipeInner}>
@@ -612,128 +729,171 @@ export default function CookingLite({ route, navigation }) {
           </LiteSectionCard>
         )}
 
+        {/* ── COMPETITOR FLOW ── */}
         {isCompetitorFlow ? (
           <>
-            <LiteSectionCard title="Dish Photo">
+            {/* Dish photo card */}
+            <LiteSectionCard title="📸  Dish Photo" style={styles.dishPhotoCard}>
               {photoUri ? (
-                <Image source={{ uri: photoUri }} style={LITE_GAME_STYLES.mediaPreview} />
+                <Image source={{ uri: photoUri }} style={styles.dishPhotoPreview} />
               ) : (
-                <LiteCardBody>No photo selected yet.</LiteCardBody>
+                <View style={styles.dishPhotoPlaceholder}>
+                  <Text style={styles.dishPhotoPlaceholderEmoji}>📷</Text>
+                  <Text style={styles.dishPhotoPlaceholderText}>Snap your masterpiece</Text>
+                </View>
               )}
-              <LitePrimaryButton onPress={takePhoto} disabled={pendingSubmitDish || !canSubmitDish}>
-                Take Photo
-              </LitePrimaryButton>
-              <LiteSecondaryButton onPress={chooseFromLibrary} disabled={pendingSubmitDish || !canSubmitDish}>
-                Choose from Library
-              </LiteSecondaryButton>
+              {!hasSubmittedOwnDish && (
+                <View style={styles.photoButtonRow}>
+                  <View style={styles.photoButtonHalf}>
+                    <LitePrimaryButton onPress={takePhoto} disabled={pendingSubmitDish || !canSubmitDish}>
+                      Take Photo
+                    </LitePrimaryButton>
+                  </View>
+                  <View style={styles.photoButtonHalf}>
+                    <LiteSecondaryButton onPress={chooseFromLibrary} disabled={pendingSubmitDish || !canSubmitDish}>
+                      Library
+                    </LiteSecondaryButton>
+                  </View>
+                </View>
+              )}
             </LiteSectionCard>
 
-            <View style={styles.dishNameBlock}>
-              <Text style={styles.dishNameLabel}>Name your masterpiece</Text>
-              <TextInput
-                style={liteInputStyle}
-                value={dishName}
-                onChangeText={setDishName}
-                placeholder="Dish name"
-                placeholderTextColor={LITE_THEME.text + '88'}
-                editable={canSubmitDish}
-              />
-            </View>
-
-            <View style={styles.submitZone}>
-              <Text style={styles.submitKicker}>Ready for the judges?</Text>
-              <LitePrimaryButton
-                onPress={submitDish}
-                disabled={pendingSubmitDish || loading || !canSubmitDish}
-              >
-                {pendingSubmitDish ? 'Submitting...' : 'SUBMIT DISH'}
-              </LitePrimaryButton>
-            </View>
+            {/* Dish name + submit */}
+            {hasSubmittedOwnDish ? (
+              <View style={styles.submittedBlock}>
+                <View style={styles.submittedShadow} />
+                <View style={styles.submittedCard}>
+                  <Text style={styles.submittedEmoji}>✅</Text>
+                  <Text style={styles.submittedTitle}>Dish Submitted!</Text>
+                  <Text style={styles.submittedHint}>Hanging tight for the judges to roll in.</Text>
+                </View>
+              </View>
+            ) : (
+              <LiteSectionCard title="Name Your Masterpiece" style={styles.dishNameCard}>
+                <TextInput
+                  style={liteInputStyle}
+                  value={dishName}
+                  onChangeText={setDishName}
+                  placeholder="What's this dish called?"
+                  placeholderTextColor={LITE_THEME.text + '88'}
+                  editable={canSubmitDish && !hasSubmittedOwnDish}
+                />
+                <View style={styles.submitZone}>
+                  <Text style={styles.submitKicker}>Ready for the judges?</Text>
+                  <LitePrimaryButton
+                    onPress={submitDish}
+                    disabled={pendingSubmitDish || loading || !canSubmitDish}
+                  >
+                    {pendingSubmitDish ? 'Submitting...' : 'SUBMIT DISH'}
+                  </LitePrimaryButton>
+                </View>
+              </LiteSectionCard>
+            )}
           </>
         ) : isJudge ? (
-          <LiteSectionCard title="Judge's Table" style={styles.rolePanelCard}>
+          /* ── JUDGE FLOW ── */
+          <LiteSectionCard title="⚖️  Judge's Panel" style={styles.rolePanelCard}>
             <LiteCardBody style={styles.rolePanelCopy}>
-              Review the challenge, then move to the judging screen when ready.
+              Review the challenge, then head to the judging screen when ready.
             </LiteCardBody>
-            <LiteCardBody style={styles.pointsUsageCopy}>Points: {myPoints}</LiteCardBody>
-            <LiteSectionHeading style={styles.sabotagePanelHeading}>Trigger a sabotage</LiteSectionHeading>
+
+            {/* Sabotage section */}
+            <View style={styles.panelSectionDivider}>
+              <Text style={styles.panelSectionLabel}>⚡  SABOTAGE</Text>
+            </View>
             {sabotageAlive && activeSabotage && sabotageSponsorLine ? (
-              <LiteMutedText style={styles.activeSabotageLine}>
-                Active: {activeSabotage.label} — by {sabotageSponsorLine}
-              </LiteMutedText>
+              <View style={styles.activeSabotageAlert}>
+                <Text style={styles.activeSabotageText}>
+                  🔴  Active: {activeSabotage.label} — by {sabotageSponsorLine}
+                </Text>
+              </View>
             ) : (
-              <LiteMutedText style={styles.sabotagePanelHint}>Nothing live right now. Pick one below.</LiteMutedText>
+              <LiteMutedText style={styles.sabotagePanelHint}>Nothing live right now.</LiteMutedText>
             )}
-            <LiteSecondaryButton
-              onPress={() => onSabotagePress(LITE_SABOTAGE_TYPE.BLACKOUT)}
-              disabled={sabotageButtonsLocked || myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.BLACKOUT]}
-            >
-              {pendingSabotageKey === LITE_SABOTAGE_TYPE.BLACKOUT
-                ? 'Sending...'
-                : `${LITE_SABOTAGE_PRESETS[LITE_SABOTAGE_TYPE.BLACKOUT].label} (-${LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.BLACKOUT]})`}
-            </LiteSecondaryButton>
-            {myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.BLACKOUT] ? (
-              <LiteMutedText style={styles.needPointsText}>
-                Need {LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.BLACKOUT]} points
-              </LiteMutedText>
-            ) : null}
-            <LiteSecondaryButton
-              onPress={() => onSabotagePress(LITE_SABOTAGE_TYPE.TIME_PENALTY)}
-              disabled={sabotageButtonsLocked || myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.TIME_PENALTY]}
-            >
-              {pendingSabotageKey === LITE_SABOTAGE_TYPE.TIME_PENALTY
-                ? 'Sending...'
-                : `${LITE_SABOTAGE_PRESETS[LITE_SABOTAGE_TYPE.TIME_PENALTY].label} (-${LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.TIME_PENALTY]})`}
-            </LiteSecondaryButton>
-            {myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.TIME_PENALTY] ? (
-              <LiteMutedText style={styles.needPointsText}>
-                Need {LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.TIME_PENALTY]} points
-              </LiteMutedText>
-            ) : null}
-            <LiteSecondaryButton
-              onPress={() => onSabotagePress(LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT)}
-              disabled={sabotageButtonsLocked || myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT]}
-            >
-              {pendingSabotageKey === LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT
-                ? 'Sending...'
-                : `${LITE_SABOTAGE_PRESETS[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT].label} (-${LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT]})`}
-            </LiteSecondaryButton>
-            {myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT] ? (
-              <LiteMutedText style={styles.needPointsText}>
-                Need {LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT]} points
-              </LiteMutedText>
-            ) : null}
-            <LitePrimaryButton onPress={goToJudgesTable} disabled={pendingJudgeNav || loading}>
-              {pendingJudgeNav ? 'Opening...' : "Go to Judge's Table"}
-            </LitePrimaryButton>
+            {[
+              LITE_SABOTAGE_TYPE.BLACKOUT,
+              LITE_SABOTAGE_TYPE.TIME_PENALTY,
+              LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT,
+            ].map((key) => {
+              const preset = LITE_SABOTAGE_PRESETS[key];
+              const cost = LITE_SABOTAGE_COST[key];
+              const canAfford = myPoints >= cost;
+              const isPending = pendingSabotageKey === key;
+              return (
+                <View key={key} style={styles.sabotageActionCard}>
+                  <View style={styles.sabotageActionHeader}>
+                    <Text style={styles.sabotageActionLabel}>{preset.label}</Text>
+                    <View style={[styles.sabotageActionCostPill, !canAfford && styles.sabotageActionCostPillDim]}>
+                      <Text style={styles.sabotageActionCostText}>-{cost} pts</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.sabotageActionDesc}>{preset.description}</Text>
+                  <LiteSecondaryButton
+                    onPress={() => onSabotagePress(key)}
+                    disabled={sabotageButtonsLocked || !canAfford}
+                  >
+                    {isPending ? 'Sending...' : 'Trigger'}
+                  </LiteSecondaryButton>
+                  {!canAfford ? (
+                    <LiteMutedText style={styles.needPointsText}>Need {cost} points</LiteMutedText>
+                  ) : null}
+                </View>
+              );
+            })}
+
+            {/* CTA to Judge's Table */}
+            <View style={styles.judgeNavWrap}>
+              {submittedCompetitorCount > 0 ? (
+                <LitePrimaryButton onPress={goToJudgesTable} disabled={pendingJudgeNav || loading}>
+                  {pendingJudgeNav ? 'Opening...' : "Go to Judge's Table →"}
+                </LitePrimaryButton>
+              ) : (
+                <View style={styles.judgeNavLocked}>
+                  <Text style={styles.judgeNavLockedText}>
+                    Judge's Table unlocks after a competitor submits.
+                  </Text>
+                </View>
+              )}
+            </View>
           </LiteSectionCard>
         ) : isSpectator ? (
-          <LiteSectionCard title="In the Stands" style={styles.rolePanelCard}>
+          /* ── SPECTATOR FLOW ── */
+          <LiteSectionCard title="🎪  In the Stands" style={styles.rolePanelCard}>
             <LiteCardBody style={styles.rolePanelCopy}>
-              You're spectating this round — enjoy the show from here. Voting opens when the host moves the room
-              forward.
+              You're spectating this round — enjoy the show. Voting opens when the host moves forward.
             </LiteCardBody>
-            <LiteCardBody style={styles.pointsUsageCopy}>Points: {myPoints}</LiteCardBody>
+
+            {/* Betting */}
+            <View style={styles.panelSectionDivider}>
+              <Text style={styles.panelSectionLabel}>🎲  PLACE YOUR BET</Text>
+            </View>
             {myBet ? (
-              <LiteMutedText style={styles.betInfo}>
-                Bet placed: {myBetTarget?.name || 'Competitor'} ({myBet.stake} pts)
-              </LiteMutedText>
+              <View style={styles.betLockedCard}>
+                <Text style={styles.betLockedText}>
+                  ✅  Bet placed on {myBetTarget?.name || 'Competitor'} — {myBet.stake} pts
+                </Text>
+              </View>
             ) : (
               <>
-                <LiteSectionHeading style={styles.sabotagePanelHeading}>Place your bet</LiteSectionHeading>
                 <LiteCardBody style={styles.rolePanelCopy}>Stake: {LITE_BET_STAKE} points (one bet per round)</LiteCardBody>
                 <View style={styles.betTargetsRow}>
                   {competitors.map((p) => (
-                    <Text
+                    <TouchableOpacity
                       key={`bet-${p.id}`}
                       style={[
                         styles.betTargetChip,
                         selectedBetTargetId === p.id && styles.betTargetChipSelected,
                       ]}
                       onPress={() => setSelectedBetTargetId(p.id)}
+                      activeOpacity={0.75}
                     >
-                      {p.name}
-                    </Text>
+                      <Text style={[
+                        styles.betTargetChipText,
+                        selectedBetTargetId === p.id && styles.betTargetChipTextSelected,
+                      ]}>
+                        {p.name}
+                      </Text>
+                    </TouchableOpacity>
                   ))}
                 </View>
                 <LiteSecondaryButton
@@ -747,91 +907,143 @@ export default function CookingLite({ route, navigation }) {
                 ) : null}
               </>
             )}
-            <LiteSectionHeading style={styles.sabotagePanelHeading}>Spectator Hangman</LiteSectionHeading>
+
+            {/* Hangman */}
+            <View style={styles.panelSectionDivider}>
+              <Text style={styles.panelSectionLabel}>🔤  SPECTATOR HANGMAN</Text>
+            </View>
             <LiteCardBody style={styles.hangmanHint}>
               Solve the word for +{LITE_HANGMAN_WIN_BONUS} points. One reward per round.
             </LiteCardBody>
             <View style={styles.hangmanWordWrap}>
               <Text style={styles.hangmanWordText}>{hangmanMasked}</Text>
             </View>
-            <LiteCardBody style={styles.hangmanMeta}>
-              Attempts left: {hangmanAttemptsLeft} • Guessed: {hangmanGuessed.join(', ').toUpperCase() || 'None'}
-            </LiteCardBody>
+            <View style={styles.hangmanStatsRow}>
+              <View style={[styles.hangmanStatPill, hangmanAttemptsLeft <= 1 && styles.hangmanStatPillWarn]}>
+                <Text style={styles.hangmanStatText}>{hangmanAttemptsLeft} left</Text>
+              </View>
+              <Text style={styles.hangmanGuessedText} numberOfLines={1}>
+                {hangmanGuessed.length > 0 ? hangmanGuessed.join(' ').toUpperCase() : 'No guesses yet'}
+              </Text>
+            </View>
             <View style={styles.hangmanLettersGrid}>
               {'abcdefghijklmnopqrstuvwxyz'.split('').map((letter) => {
                 const used = guessedSet.has(letter);
+                const correct = used && hangmanWord.includes(letter);
+                const wrong = used && !hangmanWord.includes(letter);
                 return (
-                  <Text
+                  <TouchableOpacity
                     key={`hang-${letter}`}
                     style={[
-                      styles.hangmanLetterChip,
-                      used && styles.hangmanLetterUsed,
+                      styles.hangmanLetterBtn,
+                      correct && styles.hangmanLetterCorrect,
+                      wrong && styles.hangmanLetterWrong,
                       !used && hangmanAttemptsLeft > 0 && !hangmanSolved && styles.hangmanLetterActive,
                     ]}
                     onPress={() => guessHangmanLetter(letter)}
+                    activeOpacity={0.7}
+                    disabled={used || hangmanSolved || hangmanAttemptsLeft <= 0}
                   >
-                    {letter.toUpperCase()}
-                  </Text>
+                    <Text style={[
+                      styles.hangmanLetterBtnText,
+                      correct && styles.hangmanLetterBtnTextCorrect,
+                      wrong && styles.hangmanLetterBtnTextWrong,
+                    ]}>
+                      {letter.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
                 );
               })}
             </View>
             {hangmanSolved ? (
-              <LiteMutedText style={styles.hangmanStatus}>
-                {hangmanRewarded || hangmanSolvedLocal
-                  ? `Solved! +${LITE_HANGMAN_WIN_BONUS} points awarded.`
-                  : 'Solved! Awarding points...'}
-              </LiteMutedText>
+              <View style={styles.hangmanStatusCard}>
+                <Text style={styles.hangmanStatusText}>
+                  {hangmanRewarded || hangmanSolvedLocal
+                    ? `🎉 Solved! +${LITE_HANGMAN_WIN_BONUS} points awarded.`
+                    : '🎉 Solved! Awarding points...'}
+                </Text>
+              </View>
             ) : hangmanAttemptsLeft <= 0 ? (
-              <LiteMutedText style={styles.hangmanStatus}>
-                Out of attempts. Word: {hangmanWord.toUpperCase()}
-              </LiteMutedText>
+              <View style={styles.hangmanStatusCard}>
+                <Text style={styles.hangmanStatusText}>
+                  Out of attempts — word was: {hangmanWord.toUpperCase()}
+                </Text>
+              </View>
             ) : null}
-            <LiteSectionHeading style={styles.sabotagePanelHeading}>Sponsor a sabotage</LiteSectionHeading>
+
+            {/* Spectator sabotage */}
+            <View style={styles.panelSectionDivider}>
+              <Text style={styles.panelSectionLabel}>⚡  SPONSOR A SABOTAGE</Text>
+            </View>
             {sabotageAlive && activeSabotage && sabotageSponsorLine ? (
-              <LiteMutedText style={styles.activeSabotageLine}>
-                Active: {activeSabotage.label} — by {sabotageSponsorLine}
-              </LiteMutedText>
+              <View style={styles.activeSabotageAlert}>
+                <Text style={styles.activeSabotageText}>
+                  🔴  Active: {activeSabotage.label} — by {sabotageSponsorLine}
+                </Text>
+              </View>
             ) : (
-              <LiteMutedText style={styles.sabotagePanelHint}>Back the kitchen chaos—one sabotage at a time.</LiteMutedText>
+              <LiteMutedText style={styles.sabotagePanelHint}>Back the kitchen chaos — one at a time.</LiteMutedText>
             )}
-            <LiteSecondaryButton
-              onPress={() => onSabotagePress(LITE_SABOTAGE_TYPE.BLACKOUT)}
-              disabled={sabotageButtonsLocked || myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.BLACKOUT]}
-            >
-              {pendingSabotageKey === LITE_SABOTAGE_TYPE.BLACKOUT
-                ? 'Sending...'
-                : `${LITE_SABOTAGE_PRESETS[LITE_SABOTAGE_TYPE.BLACKOUT].label} (-${LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.BLACKOUT]})`}
-            </LiteSecondaryButton>
-            <LiteSecondaryButton
-              onPress={() => onSabotagePress(LITE_SABOTAGE_TYPE.TIME_PENALTY)}
-              disabled={sabotageButtonsLocked || myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.TIME_PENALTY]}
-            >
-              {pendingSabotageKey === LITE_SABOTAGE_TYPE.TIME_PENALTY
-                ? 'Sending...'
-                : `${LITE_SABOTAGE_PRESETS[LITE_SABOTAGE_TYPE.TIME_PENALTY].label} (-${LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.TIME_PENALTY]})`}
-            </LiteSecondaryButton>
-            <LiteSecondaryButton
-              onPress={() => onSabotagePress(LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT)}
-              disabled={sabotageButtonsLocked || myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT]}
-            >
-              {pendingSabotageKey === LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT
-                ? 'Sending...'
-                : `${LITE_SABOTAGE_PRESETS[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT].label} (-${LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT]})`}
-            </LiteSecondaryButton>
+            {[
+              LITE_SABOTAGE_TYPE.BLACKOUT,
+              LITE_SABOTAGE_TYPE.TIME_PENALTY,
+              LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT,
+            ].map((key) => {
+              const preset = LITE_SABOTAGE_PRESETS[key];
+              const cost = LITE_SABOTAGE_COST[key];
+              const canAfford = myPoints >= cost;
+              const isPending = pendingSabotageKey === key;
+              return (
+                <View key={key} style={styles.sabotageActionCard}>
+                  <View style={styles.sabotageActionHeader}>
+                    <Text style={styles.sabotageActionLabel}>{preset.label}</Text>
+                    <View style={[styles.sabotageActionCostPill, !canAfford && styles.sabotageActionCostPillDim]}>
+                      <Text style={styles.sabotageActionCostText}>-{cost} pts</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.sabotageActionDesc}>{preset.description}</Text>
+                  <LiteSecondaryButton
+                    onPress={() => onSabotagePress(key)}
+                    disabled={sabotageButtonsLocked || !canAfford}
+                  >
+                    {isPending ? 'Sending...' : 'Trigger'}
+                  </LiteSecondaryButton>
+                  {!canAfford ? (
+                    <LiteMutedText style={styles.needPointsText}>Need {cost} points</LiteMutedText>
+                  ) : null}
+                </View>
+              );
+            })}
             {myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.BLACKOUT] ||
             myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.TIME_PENALTY] ||
             myPoints < LITE_SABOTAGE_COST[LITE_SABOTAGE_TYPE.MYSTERY_INGREDIENT] ? (
               <LiteMutedText style={styles.needPointsText}>Need more points for higher-cost sabotages.</LiteMutedText>
             ) : null}
+            {submittedCompetitorCount > 0 ? (
+              <View style={styles.judgeNavWrap}>
+                <LitePrimaryButton onPress={goToVotingLite} disabled={pendingSpectatorNav || loading}>
+                  {pendingSpectatorNav ? 'Opening...' : 'Go to Voting →'}
+                </LitePrimaryButton>
+              </View>
+            ) : null}
           </LiteSectionCard>
         ) : null}
 
+        {/* Roast Arena */}
         {(isJudge || isSpectator) ? (
-          <LiteSectionCard title="Roast Arena" style={styles.roastComposerCard}>
+          <LiteSectionCard title="🔥  Roast Arena" style={styles.roastComposerCard}>
             {ownRoast ? (
-              <LiteCardBody style={styles.roastLockedCopy}>Your roast is locked in: "{ownRoast.text}"</LiteCardBody>
+              <View style={styles.roastLockedCard}>
+                <Text style={styles.roastLockedEmoji}>🔒</Text>
+                <Text style={styles.roastLockedCopy}>
+                  Burn locked in: "{ownRoast.text}"
+                </Text>
+              </View>
             ) : (
               <>
+                <LiteCardBody style={styles.roastHint}>
+                  Drop a spicy observation about the kitchen action.
+                </LiteCardBody>
                 <TextInput
                   style={liteInputStyle}
                   value={roastText}
@@ -844,19 +1056,24 @@ export default function CookingLite({ route, navigation }) {
                   onPress={submitRoast}
                   disabled={pendingRoastSubmit || roastText.trim().length === 0}
                 >
-                  {pendingRoastSubmit ? 'Submitting Roast...' : 'Submit Roast'}
+                  {pendingRoastSubmit ? 'Submitting Roast...' : '🔥 Submit Roast'}
                 </LiteSecondaryButton>
               </>
             )}
           </LiteSectionCard>
         ) : null}
 
+        {/* Host start voting */}
         {isHost && (
-          <LiteSecondaryButton onPress={hostStartVoting} disabled={pendingStartVoting || loading}>
-            {pendingStartVoting ? 'Starting...' : 'Host: Start Voting'}
-          </LiteSecondaryButton>
+          <View style={styles.bottomActionArea}>
+            <LiteSecondaryButton onPress={hostStartVoting} disabled={pendingStartVoting || loading}>
+              {pendingStartVoting ? 'Starting...' : submittedCompetitorCount > 0 ? 'Start Judging' : 'Host: Start Voting'}
+            </LiteSecondaryButton>
+          </View>
         )}
       </ScrollView>
+
+      {/* Roast toast overlay */}
       {activeRoastToast ? (
         <View pointerEvents="none" style={styles.roastToastWrap}>
           <View style={styles.roastToast}>
@@ -882,84 +1099,87 @@ const styles = StyleSheet.create({
     paddingTop: LITE_THEME.contentPaddingTop - 8,
     paddingBottom: LITE_THEME.contentPaddingBottom + 12,
   },
-  titleBlock: { marginBottom: 8 },
-  heroTitle: { marginBottom: 4, textAlign: 'left' },
-  roleRow: {
+
+  // ── Player name row ──────────────────────────
+  playerNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    flexWrap: 'wrap',
-    marginBottom: 4,
+    justifyContent: 'space-between',
+    marginTop: 2,
+    marginBottom: 10,
+    paddingHorizontal: 2,
   },
-  playerTag: {
+  playerNameTag: {
     fontFamily: 'Fredoka_600SemiBold',
     fontSize: 15,
     color: PALETTE.espresso,
+  },
+  myPointsPill: {
+    backgroundColor: LITE_THEME.primaryAction,
+    borderWidth: 2,
+    borderColor: PALETTE.espresso,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  myPointsText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: PALETTE.ink,
+  },
+
+  // ── Timer hero ───────────────────────────────
+  heroTimerOuter: {
+    position: 'relative',
+    marginBottom: 14,
+  },
+  heroTimerShadow: {
+    position: 'absolute',
+    top: 6,
+    left: 0,
+    right: 0,
+    bottom: -6,
+    backgroundColor: PALETTE.espresso,
+    borderRadius: 22,
   },
   heroTimerShell: {
     borderRadius: 22,
     borderWidth: 3,
     overflow: 'hidden',
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 4,
   },
   heroTimerGradient: {
-    paddingVertical: 18,
+    paddingVertical: 20,
     paddingHorizontal: 16,
     alignItems: 'center',
   },
   timerEyebrow: {
     fontFamily: 'Fredoka_700Bold',
-    fontSize: 12,
-    letterSpacing: 2,
+    fontSize: 11,
+    letterSpacing: 2.5,
     color: PALETTE.espresso,
     textTransform: 'uppercase',
     marginBottom: 4,
+    opacity: 0.75,
   },
   timerHero: {
     fontFamily: 'TitanOne_400Regular',
-    fontSize: 64,
-    lineHeight: 72,
+    fontSize: 68,
+    lineHeight: 76,
     letterSpacing: 2,
   },
   timerHint: {
     marginTop: 8,
     fontFamily: 'Fredoka_700Bold',
     fontSize: 13,
-    color: PALETTE.espresso,
     textAlign: 'center',
   },
+
+  // ── Challenge pills + banner ─────────────────
   challengePillRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     marginBottom: 14,
-  },
-  aiChallengeBanner: {
-    backgroundColor: PALETTE.paper,
-    borderWidth: 3,
-    borderColor: PALETTE.espresso,
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 14,
-  },
-  demoModeTag: {
-    marginBottom: 8,
-    alignSelf: 'flex-start',
-  },
-  challengeTitleDisplay: {
-    fontFamily: 'TitanOne_400Regular',
-    fontSize: 22,
-    color: PALETTE.red,
-    marginBottom: 8,
-    lineHeight: 28,
-  },
-  challengeDescription: {
-    lineHeight: 22,
   },
   challengePill: {
     backgroundColor: PALETTE.paper,
@@ -987,123 +1207,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: PALETTE.ink,
   },
-  recipeCard: {
+  aiChallengeBanner: {
+    backgroundColor: PALETTE.paper,
+    borderWidth: 3,
+    borderColor: PALETTE.espresso,
+    borderRadius: 18,
+    padding: 14,
     marginBottom: 14,
   },
-  recipeInner: {
-    paddingTop: 4,
-    paddingBottom: 6,
-  },
-  recipeDishTitle: {
+  demoModeTag: {
     marginBottom: 8,
-    fontSize: 20,
+    alignSelf: 'flex-start',
   },
-  recipeMeta: {
-    marginBottom: 14,
-    lineHeight: 22,
-  },
-  recipeSectionHeading: {
-    marginTop: 4,
-    marginBottom: 8,
-  },
-  recipeLine: {
-    marginBottom: 6,
-    lineHeight: 21,
-  },
-  recipeStep: {
-    marginBottom: 12,
-    lineHeight: 22,
-  },
-  dishNameBlock: {
-    marginBottom: 8,
-  },
-  dishNameLabel: {
-    fontFamily: 'Fredoka_700Bold',
-    fontSize: 14,
+  challengeTitleDisplay: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 22,
     color: PALETTE.red,
-    marginBottom: 6,
-  },
-  submitZone: {
-    marginTop: 6,
-    marginBottom: 10,
-  },
-  submitKicker: {
-    fontFamily: 'Fredoka_700Bold',
-    fontSize: 15,
-    color: PALETTE.espresso,
-    textAlign: 'center',
     marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    lineHeight: 28,
   },
+  challengeDescription: {
+    lineHeight: 22,
+  },
+
+  // ── Kitchen crew ─────────────────────────────
   crewCard: { marginBottom: 12 },
   crewRow: { marginBottom: 6 },
   crewBadges: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
-  pointsCard: { marginBottom: 12 },
-  pointsText: { fontFamily: 'Fredoka_700Bold' },
-  rolePanelCard: { marginBottom: 12 },
-  rolePanelCopy: { marginBottom: 12, lineHeight: 22 },
-  pointsUsageCopy: { marginBottom: 8, fontFamily: 'Fredoka_700Bold' },
-  needPointsText: { marginTop: 6, marginBottom: 8 },
-  betInfo: { marginBottom: 10 },
-  betTargetsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  betTargetChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 2,
-    borderColor: PALETTE.creamEdge,
-    backgroundColor: LITE_THEME.cardInner,
-    fontFamily: 'Fredoka_700Bold',
-    color: LITE_THEME.text,
-  },
-  betTargetChipSelected: {
-    borderColor: PALETTE.espresso,
-    backgroundColor: LITE_THEME.primaryAction,
-  },
-  hangmanHint: { marginBottom: 8 },
-  hangmanWordWrap: {
-    borderWidth: 2,
-    borderColor: LITE_THEME.cardBorder,
-    borderRadius: 12,
-    backgroundColor: LITE_THEME.cardInner,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    marginBottom: 8,
-  },
-  hangmanWordText: {
-    fontFamily: 'Fredoka_700Bold',
-    fontSize: 19,
-    letterSpacing: 2,
-    color: LITE_THEME.textInk,
-    textAlign: 'center',
-  },
-  hangmanMeta: { marginBottom: 8, fontSize: 12 },
-  hangmanLettersGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 8,
-  },
-  hangmanLetterChip: {
-    minWidth: 30,
-    textAlign: 'center',
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: LITE_THEME.cardBorder,
-    backgroundColor: '#FFF4DA',
-    color: LITE_THEME.text,
-    fontFamily: 'Fredoka_700Bold',
-    fontSize: 12,
-  },
-  hangmanLetterActive: {
-    borderColor: PALETTE.espresso,
-  },
-  hangmanLetterUsed: {
-    opacity: 0.45,
-  },
-  hangmanStatus: { marginBottom: 10, fontFamily: 'Fredoka_700Bold' },
+
+  // ── Sabotage alert banner (competitor) ───────
   sabotageBanner: {
     backgroundColor: PALETTE.ink,
     borderWidth: 3,
@@ -1125,11 +1257,385 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   sabotageByLine: { marginTop: 8, color: '#FFF5E6' },
-  sabotagePanelHeading: { marginTop: 4, marginBottom: 6 },
+
+  // ── Recipe card ──────────────────────────────
+  recipeCard: { marginBottom: 14 },
+  recipeInner: { paddingTop: 4, paddingBottom: 6 },
+  recipeDishTitle: { marginBottom: 8, fontSize: 20 },
+  recipeMeta: { marginBottom: 14, lineHeight: 22 },
+  recipeSectionHeading: { marginTop: 4, marginBottom: 8 },
+  recipeLine: { marginBottom: 6, lineHeight: 21 },
+  recipeStep: { marginBottom: 12, lineHeight: 22 },
+
+  // ── Competitor: dish photo ────────────────────
+  dishPhotoCard: { marginBottom: 12 },
+  dishPhotoPreview: {
+    width: '100%',
+    height: 230,
+    borderRadius: 12,
+    backgroundColor: '#E9D8B6',
+    marginBottom: 10,
+  },
+  dishPhotoPlaceholder: {
+    width: '100%',
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: '#F0E6CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+    gap: 6,
+  },
+  dishPhotoPlaceholderEmoji: {
+    fontSize: 40,
+  },
+  dishPhotoPlaceholderText: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 13,
+    color: LITE_THEME.text,
+    opacity: 0.6,
+  },
+  photoButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  photoButtonHalf: {
+    flex: 1,
+  },
+
+  // ── Competitor: submitted confirmation ────────
+  submittedBlock: {
+    position: 'relative',
+    marginBottom: 16,
+  },
+  submittedShadow: {
+    position: 'absolute',
+    top: 6,
+    left: 0,
+    right: 0,
+    bottom: -6,
+    backgroundColor: '#3A6B20',
+    borderRadius: 18,
+  },
+  submittedCard: {
+    borderWidth: 3,
+    borderColor: '#3A6B20',
+    borderRadius: 18,
+    backgroundColor: '#D4F0C0',
+    alignItems: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+  },
+  submittedEmoji: {
+    fontSize: 36,
+    marginBottom: 6,
+  },
+  submittedTitle: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 22,
+    color: '#2D5A14',
+    marginBottom: 4,
+  },
+  submittedHint: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: '#3A6B20',
+    opacity: 0.8,
+    textAlign: 'center',
+  },
+
+  // ── Competitor: dish name + submit ────────────
+  dishNameCard: { marginBottom: 12 },
+  submitZone: {
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  submitKicker: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+    textAlign: 'center',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    opacity: 0.75,
+  },
+
+  // ── Role panels (judge / spectator) ──────────
+  rolePanelCard: { marginBottom: 12 },
+  rolePanelCopy: { marginBottom: 10, lineHeight: 22 },
+  panelSectionDivider: {
+    borderTopWidth: 2,
+    borderTopColor: LITE_THEME.cardBorder,
+    paddingTop: 10,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  panelSectionLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 12,
+    color: LITE_THEME.text,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    opacity: 0.65,
+  },
+
+  // ── Active sabotage alert (inside panel) ─────
+  activeSabotageAlert: {
+    backgroundColor: '#3B1010',
+    borderWidth: 2,
+    borderColor: PALETTE.red,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  activeSabotageText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: '#FFE8B8',
+  },
   sabotagePanelHint: { marginBottom: 10 },
-  activeSabotageLine: { marginBottom: 10, fontFamily: 'Fredoka_600SemiBold' },
+  needPointsText: { marginTop: 4, marginBottom: 8 },
+
+  // ── Sabotage action cards ─────────────────────
+  sabotageActionCard: {
+    backgroundColor: LITE_THEME.cardBg,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+  },
+  sabotageActionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  sabotageActionLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 15,
+    color: LITE_THEME.textInk,
+    flex: 1,
+    marginRight: 8,
+  },
+  sabotageActionCostPill: {
+    backgroundColor: PALETTE.tomato,
+    borderWidth: 2,
+    borderColor: PALETTE.espresso,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  sabotageActionCostPillDim: {
+    backgroundColor: LITE_THEME.cardInner,
+    borderColor: LITE_THEME.cardBorder,
+  },
+  sabotageActionCostText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 11,
+    color: '#FFFFFF',
+  },
+  sabotageActionDesc: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 12,
+    color: LITE_THEME.text,
+    lineHeight: 18,
+    marginBottom: 10,
+    opacity: 0.75,
+  },
+
+  // ── Judge/spectator nav CTA ───────────────────
+  judgeNavWrap: {
+    marginTop: 10,
+  },
+  judgeNavLocked: {
+    backgroundColor: LITE_THEME.cardInner,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+  },
+  judgeNavLockedText: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 13,
+    color: LITE_THEME.text,
+    textAlign: 'center',
+    opacity: 0.7,
+  },
+
+  // ── Betting ───────────────────────────────────
+  betLockedCard: {
+    backgroundColor: '#D4F0C0',
+    borderWidth: 2,
+    borderColor: '#A8D98A',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+  },
+  betLockedText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 14,
+    color: '#2D5A14',
+  },
+  betTargetsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  betTargetChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 2.5,
+    borderColor: PALETTE.espresso,
+    backgroundColor: LITE_THEME.cardBg,
+  },
+  betTargetChipSelected: {
+    borderColor: PALETTE.espresso,
+    backgroundColor: LITE_THEME.primaryAction,
+  },
+  betTargetChipText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 14,
+    color: PALETTE.espresso,
+  },
+  betTargetChipTextSelected: {
+    color: PALETTE.ink,
+  },
+
+  // ── Hangman ───────────────────────────────────
+  hangmanHint: { marginBottom: 8 },
+  hangmanWordWrap: {
+    borderWidth: 2.5,
+    borderColor: PALETTE.espresso,
+    borderRadius: 14,
+    backgroundColor: LITE_THEME.cardInner,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  hangmanWordText: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 24,
+    letterSpacing: 4,
+    color: LITE_THEME.textInk,
+    textAlign: 'center',
+  },
+  hangmanStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  hangmanStatPill: {
+    backgroundColor: LITE_THEME.primaryAction,
+    borderWidth: 2,
+    borderColor: PALETTE.espresso,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  hangmanStatPillWarn: {
+    backgroundColor: PALETTE.tomato,
+    borderColor: PALETTE.espresso,
+  },
+  hangmanStatText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 12,
+    color: PALETTE.ink,
+  },
+  hangmanGuessedText: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 12,
+    color: LITE_THEME.text,
+    flex: 1,
+    opacity: 0.7,
+  },
+  hangmanLettersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginBottom: 10,
+  },
+  hangmanLetterBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    backgroundColor: '#FFF4DA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hangmanLetterActive: {
+    borderColor: PALETTE.espresso,
+    backgroundColor: LITE_THEME.cardBg,
+  },
+  hangmanLetterCorrect: {
+    backgroundColor: '#C8F0A8',
+    borderColor: '#3A6B20',
+    opacity: 0.6,
+  },
+  hangmanLetterWrong: {
+    backgroundColor: '#F0C8C8',
+    borderColor: PALETTE.red,
+    opacity: 0.45,
+  },
+  hangmanLetterBtnText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: PALETTE.espresso,
+  },
+  hangmanLetterBtnTextCorrect: {
+    color: '#2D5A14',
+  },
+  hangmanLetterBtnTextWrong: {
+    color: PALETTE.red,
+  },
+  hangmanStatusCard: {
+    backgroundColor: LITE_THEME.cardInner,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  hangmanStatusText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 14,
+    color: LITE_THEME.textInk,
+    textAlign: 'center',
+  },
+
+  // ── Roast Arena ───────────────────────────────
   roastComposerCard: { marginBottom: 12 },
-  roastLockedCopy: { marginBottom: 6 },
+  roastHint: { marginBottom: 8, lineHeight: 20 },
+  roastLockedCard: {
+    backgroundColor: '#FFF0D6',
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  roastLockedEmoji: {
+    fontSize: 18,
+  },
+  roastLockedCopy: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: LITE_THEME.textInk,
+    lineHeight: 20,
+    flex: 1,
+  },
+
+  // ── Bottom action ─────────────────────────────
+  bottomActionArea: { marginTop: 4, paddingBottom: 10 },
+
+  // ── Roast toast overlay ───────────────────────
   roastToastWrap: {
     position: 'absolute',
     top: 86,

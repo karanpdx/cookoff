@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { PALETTE, CloudBg, ChunkyBtn } from '../components/DesignSystem';
+import AnimatedClouds from '../components/AnimatedClouds';
 
 const VIEWFINDER = Math.min(280, Dimensions.get('window').width - 48);
 
@@ -44,9 +45,12 @@ export default function CharacterCreatorScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <CloudBg />
+      <AnimatedClouds minFrac={0.38} maxFrac={0.93} count={3} />
       <View style={styles.inner}>
-        <Text style={styles.title}>CREATE YOUR CHEF</Text>
-        <Text style={styles.sub}>Snap a selfie — we will use it as your cartoon chef avatar.</Text>
+        <View style={styles.titleWrap}>
+          <Text style={styles.title}>CREATE YOUR CHEF</Text>
+          <Text style={styles.sub}>Snap a selfie to become your cartoon kitchen champion.</Text>
+        </View>
 
         <TouchableOpacity
           style={styles.viewfinderRing}
@@ -55,13 +59,16 @@ export default function CharacterCreatorScreen({ navigation }) {
           accessibilityRole="button"
           accessibilityLabel="Open camera to take selfie"
         >
+          <View style={styles.viewfinderOuterGlow} />
           <View style={styles.viewfinderInner}>
             {avatarUri ? (
               <Image source={{ uri: avatarUri }} style={styles.viewfinderImage} resizeMode="cover" />
             ) : (
               <View style={styles.viewfinderPlaceholder}>
                 <Text style={styles.cameraGlyph}>📷</Text>
-                <Text style={styles.tapHint}>Tap to open camera</Text>
+                <View style={styles.tapHintPill}>
+                  <Text style={styles.tapHint}>Tap to open camera</Text>
+                </View>
               </View>
             )}
           </View>
@@ -78,16 +85,18 @@ export default function CharacterCreatorScreen({ navigation }) {
           <Text style={styles.previewEmpty}>Your preview will appear here after you take a photo.</Text>
         )}
 
-        <ChunkyBtn
-          bg={PALETTE.yellow}
-          shadowColor={PALETTE.espresso}
-          color={PALETTE.espresso}
-          onPress={goHome}
-          disabled={!avatarUri}
-          style={styles.cta}
-        >
-          LOOKS GREAT →
-        </ChunkyBtn>
+        <View style={styles.ctaDock}>
+          <ChunkyBtn
+            bg={PALETTE.yellow}
+            shadowColor={PALETTE.espresso}
+            color={PALETTE.espresso}
+            onPress={goHome}
+            disabled={!avatarUri}
+            style={styles.cta}
+          >
+            LOOKS GREAT →
+          </ChunkyBtn>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -101,39 +110,68 @@ const styles = StyleSheet.create({
   inner: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 18,
     alignItems: 'center',
+  },
+  titleWrap: {
+    alignSelf: 'stretch',
+    backgroundColor: PALETTE.paper,
+    borderWidth: 3,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 10,
+    marginBottom: 18,
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 4,
+    elevation: 3,
   },
   title: {
     fontFamily: 'TitanOne_400Regular',
-    fontSize: 28,
+    fontSize: 32,
     color: PALETTE.red,
     textAlign: 'center',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
-    marginBottom: 10,
+    marginBottom: 8,
     textShadowColor: PALETTE.espresso,
-    textShadowOffset: { width: 0, height: 3 },
+    textShadowOffset: { width: 0, height: 4 },
     textShadowRadius: 0,
   },
   sub: {
     fontFamily: 'Fredoka_600SemiBold',
-    fontSize: 15,
+    fontSize: 15.5,
     color: PALETTE.espresso,
     textAlign: 'center',
-    marginBottom: 28,
+    lineHeight: 21,
     paddingHorizontal: 8,
   },
   viewfinderRing: {
     width: VIEWFINDER + 16,
     height: VIEWFINDER + 16,
     borderRadius: (VIEWFINDER + 16) / 2,
-    borderWidth: 4,
+    borderWidth: 5,
     borderColor: PALETTE.espresso,
     backgroundColor: PALETTE.paper,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
+    shadowColor: PALETTE.espresso,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  viewfinderOuterGlow: {
+    position: 'absolute',
+    width: VIEWFINDER + 4,
+    height: VIEWFINDER + 4,
+    borderRadius: (VIEWFINDER + 4) / 2,
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
   },
   viewfinderInner: {
     width: VIEWFINDER,
@@ -152,14 +190,22 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 10,
   },
   cameraGlyph: {
     fontSize: 52,
   },
+  tapHintPill: {
+    backgroundColor: PALETTE.paper,
+    borderColor: PALETTE.creamEdge,
+    borderWidth: 2,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
   tapHint: {
     fontFamily: 'Fredoka_700Bold',
-    fontSize: 13,
+    fontSize: 12.5,
     color: PALETTE.espresso,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -167,7 +213,7 @@ const styles = StyleSheet.create({
   previewWrap: {
     alignSelf: 'stretch',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 12,
   },
   previewLabel: {
     fontFamily: 'Fredoka_700Bold',
@@ -194,14 +240,26 @@ const styles = StyleSheet.create({
   previewEmpty: {
     fontFamily: 'Fredoka_600SemiBold',
     fontSize: 14,
-    color: PALETTE.espresso + '99',
+    color: PALETTE.espresso,
     textAlign: 'center',
-    marginBottom: 20,
-    paddingHorizontal: 12,
+    marginBottom: 12,
+    paddingHorizontal: 20,
+    lineHeight: 19,
+    backgroundColor: PALETTE.paper,
+    borderWidth: 2,
+    borderColor: PALETTE.creamEdge,
+    borderRadius: 12,
+    paddingVertical: 8,
+    alignSelf: 'stretch',
+  },
+  ctaDock: {
+    alignSelf: 'stretch',
+    marginTop: 'auto',
+    paddingBottom: 12,
+    paddingTop: 8,
   },
   cta: {
     alignSelf: 'stretch',
-    marginTop: 'auto',
-    marginBottom: 16,
+    marginBottom: 0,
   },
 });
