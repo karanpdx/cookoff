@@ -327,3 +327,455 @@ const codePillStyles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 });
+
+// ─────────────────────────────────────────────
+// Lite game UI — Papa’s-style tokens & primitives
+// (multiplayer logic lives in screens; this is presentation only)
+// ─────────────────────────────────────────────
+
+export const LITE_THEME = {
+  screenBg: PALETTE.sky,
+  cardBg: PALETTE.paper,
+  cardInner: '#FFF7E5',
+  cardBorder: PALETTE.creamEdge,
+  borderHeavy: 3,
+  radiusLg: 20,
+  radiusMd: 16,
+  radiusSm: 12,
+  primaryAction: '#F9B347',
+  secondaryAction: '#F29F38',
+  text: PALETTE.espresso,
+  textInk: PALETTE.ink,
+  titleRed: PALETTE.red,
+  contentPadding: 20,
+  contentPaddingTop: 80,
+  contentPaddingBottom: 44,
+};
+
+export const LITE_GAME_STYLES = StyleSheet.create({
+  screenTitle: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 34,
+    color: LITE_THEME.titleRed,
+    marginBottom: 10,
+  },
+  sectionCard: {
+    backgroundColor: LITE_THEME.cardBg,
+    borderWidth: LITE_THEME.borderHeavy,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: LITE_THEME.radiusLg,
+    padding: 14,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 15,
+    color: LITE_THEME.titleRed,
+    marginBottom: 8,
+  },
+  playerCard: {
+    backgroundColor: LITE_THEME.cardInner,
+    borderRadius: LITE_THEME.radiusSm,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  heroCodeLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: LITE_THEME.text,
+    marginBottom: 2,
+  },
+  heroCode: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 38,
+    color: LITE_THEME.titleRed,
+    marginBottom: 6,
+  },
+  heroSubtitle: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: LITE_THEME.text,
+  },
+  photoFallbackLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: LITE_THEME.text,
+  },
+  playerName: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 16,
+    color: LITE_THEME.textInk,
+    flex: 1,
+  },
+  pill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderWidth: 2,
+    borderColor: PALETTE.espresso,
+  },
+  pillText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 11,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: LITE_THEME.text,
+  },
+  timerWrap: {
+    backgroundColor: LITE_THEME.cardInner,
+    borderRadius: LITE_THEME.radiusMd,
+    borderWidth: LITE_THEME.borderHeavy,
+    borderColor: LITE_THEME.cardBorder,
+    padding: 12,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  timerLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: LITE_THEME.text,
+  },
+  timerValue: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 44,
+    color: LITE_THEME.titleRed,
+  },
+  scoreRow: {
+    backgroundColor: LITE_THEME.cardBg,
+    borderWidth: LITE_THEME.borderHeavy,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: LITE_THEME.radiusMd,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  scoreRowName: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 16,
+    color: LITE_THEME.textInk,
+  },
+  scorePill: {
+    backgroundColor: LITE_THEME.cardInner,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  scorePillText: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 12,
+    color: LITE_THEME.text,
+  },
+  bodyMuted: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 13,
+    color: LITE_THEME.text,
+    marginBottom: 6,
+  },
+  bodyError: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: LITE_THEME.titleRed,
+    marginBottom: 6,
+  },
+  cardHeading: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 18,
+    color: LITE_THEME.titleRed,
+    marginBottom: 4,
+  },
+  cardBody: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 14,
+    color: LITE_THEME.textInk,
+  },
+  sectionHeading: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 14,
+    color: LITE_THEME.text,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  liteInput: {
+    backgroundColor: LITE_THEME.cardBg,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: LITE_THEME.radiusSm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontFamily: 'Fredoka_600SemiBold',
+    color: LITE_THEME.textInk,
+    marginBottom: 4,
+  },
+  fieldLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 14,
+    color: LITE_THEME.text,
+    marginBottom: 6,
+    marginTop: 8,
+  },
+  dishVoteCard: {
+    backgroundColor: LITE_THEME.cardBg,
+    borderWidth: LITE_THEME.borderHeavy,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: LITE_THEME.radiusLg,
+    padding: 10,
+    marginBottom: 12,
+  },
+  dishVoteCardSelected: {
+    borderColor: LITE_THEME.secondaryAction,
+    backgroundColor: LITE_THEME.cardInner,
+  },
+  dishPhoto: {
+    width: '100%',
+    height: 140,
+    borderRadius: LITE_THEME.radiusSm,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    marginBottom: 8,
+  },
+  photoFallback: {
+    width: '100%',
+    height: 140,
+    borderRadius: LITE_THEME.radiusSm,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    marginBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: LITE_THEME.cardInner,
+  },
+  voteHint: {
+    fontFamily: 'Fredoka_600SemiBold',
+    fontSize: 12,
+    color: LITE_THEME.text,
+    marginTop: 4,
+  },
+  mediaPreview: {
+    width: '100%',
+    height: 180,
+    borderRadius: LITE_THEME.radiusSm,
+    borderWidth: 2,
+    borderColor: LITE_THEME.cardBorder,
+    marginBottom: 10,
+    marginTop: 6,
+  },
+  podiumCard: {
+    backgroundColor: LITE_THEME.cardBg,
+    borderWidth: LITE_THEME.borderHeavy,
+    borderColor: LITE_THEME.cardBorder,
+    borderRadius: LITE_THEME.radiusLg,
+    padding: 14,
+    marginBottom: 14,
+    alignItems: 'center',
+  },
+  podiumLabel: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 13,
+    color: LITE_THEME.text,
+  },
+  podiumName: {
+    fontFamily: 'TitanOne_400Regular',
+    fontSize: 28,
+    color: LITE_THEME.titleRed,
+    marginTop: 2,
+  },
+  podiumScore: {
+    fontFamily: 'Fredoka_700Bold',
+    fontSize: 15,
+    color: LITE_THEME.text,
+    marginBottom: 8,
+  },
+  podiumBars: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  podiumBar: {
+    width: 48,
+    borderRadius: 8,
+    backgroundColor: LITE_THEME.primaryAction,
+  },
+});
+
+export function LiteScreenTitle({ children, style }) {
+  return <Text style={[LITE_GAME_STYLES.screenTitle, style]}>{children}</Text>;
+}
+
+export function LiteSectionCard({ title, children, style }) {
+  return (
+    <View style={[LITE_GAME_STYLES.sectionCard, style]}>
+      {title ? <Text style={LITE_GAME_STYLES.sectionTitle}>{title}</Text> : null}
+      {children}
+    </View>
+  );
+}
+
+export function LitePlayerCard({ name, right, style }) {
+  return (
+    <View style={[LITE_GAME_STYLES.playerCard, style]}>
+      <Text style={LITE_GAME_STYLES.playerName} numberOfLines={1}>
+        {name}
+      </Text>
+      {right}
+    </View>
+  );
+}
+
+export function LiteBadge({ label, variant = 'default', style }) {
+  const bg =
+    variant === 'host'
+      ? LITE_THEME.primaryAction
+      : variant === 'score'
+      ? LITE_THEME.cardInner
+      : PALETTE.cream;
+  return (
+    <View style={[LITE_GAME_STYLES.pill, { backgroundColor: bg }, style]}>
+      <Text style={LITE_GAME_STYLES.pillText}>{label}</Text>
+    </View>
+  );
+}
+
+export function LitePrimaryButton(props) {
+  return (
+    <ChunkyBtn
+      bg={LITE_THEME.primaryAction}
+      shadowColor={PALETTE.espresso}
+      color={PALETTE.espresso}
+      {...props}
+    />
+  );
+}
+
+export function LiteSecondaryButton(props) {
+  return (
+    <ChunkyBtn
+      bg={LITE_THEME.secondaryAction}
+      shadowColor={PALETTE.espresso}
+      color="#FFFFFF"
+      {...props}
+    />
+  );
+}
+
+export function LiteTimerDisplay({ label = 'Kitchen Timer', value, style }) {
+  return (
+    <View style={[LITE_GAME_STYLES.timerWrap, style]}>
+      <Text style={LITE_GAME_STYLES.timerLabel}>{label}</Text>
+      <Text style={LITE_GAME_STYLES.timerValue}>{value}</Text>
+    </View>
+  );
+}
+
+export function LiteScoreboardRow({ name, scoreText, style }) {
+  return (
+    <View style={[LITE_GAME_STYLES.scoreRow, style]}>
+      <Text style={LITE_GAME_STYLES.scoreRowName} numberOfLines={1}>
+        {name}
+      </Text>
+      <View style={LITE_GAME_STYLES.scorePill}>
+        <Text style={LITE_GAME_STYLES.scorePillText}>{scoreText}</Text>
+      </View>
+    </View>
+  );
+}
+
+export function LiteMutedText({ children, style }) {
+  return <Text style={[LITE_GAME_STYLES.bodyMuted, style]}>{children}</Text>;
+}
+
+export function LiteErrorText({ children, style }) {
+  return <Text style={[LITE_GAME_STYLES.bodyError, style]}>{children}</Text>;
+}
+
+export function LiteCardHeading({ children, style }) {
+  return <Text style={[LITE_GAME_STYLES.cardHeading, style]}>{children}</Text>;
+}
+
+export function LiteCardBody({ children, style }) {
+  return <Text style={[LITE_GAME_STYLES.cardBody, style]}>{children}</Text>;
+}
+
+export function LiteSectionHeading({ children, style }) {
+  return <Text style={[LITE_GAME_STYLES.sectionHeading, style]}>{children}</Text>;
+}
+
+export function LiteFieldLabel({ children, style }) {
+  return <Text style={[LITE_GAME_STYLES.fieldLabel, style]}>{children}</Text>;
+}
+
+/** TextInput style array for Lite forms */
+export const liteInputStyle = LITE_GAME_STYLES.liteInput;
+
+export function LiteDishVoteCard({
+  photoUri,
+  playerName,
+  dishName,
+  hint,
+  selected,
+  onPress,
+}) {
+  return (
+    <TouchableOpacity
+      style={[LITE_GAME_STYLES.dishVoteCard, selected && LITE_GAME_STYLES.dishVoteCardSelected]}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
+      {photoUri ? (
+        <Image source={{ uri: photoUri }} style={LITE_GAME_STYLES.dishPhoto} />
+      ) : (
+        <View style={LITE_GAME_STYLES.photoFallback}>
+          <Text style={LITE_GAME_STYLES.photoFallbackLabel}>No Photo</Text>
+        </View>
+      )}
+      <Text style={LITE_GAME_STYLES.scoreRowName}>{playerName}</Text>
+      <Text style={LITE_GAME_STYLES.cardBody}>{dishName}</Text>
+      {hint ? <Text style={LITE_GAME_STYLES.voteHint}>{hint}</Text> : null}
+    </TouchableOpacity>
+  );
+}
+
+export function LiteHeroCode({ label = 'Game Code', code, subtitle }) {
+  return (
+    <LiteSectionCard>
+      <Text style={LITE_GAME_STYLES.heroCodeLabel}>{label}</Text>
+      <Text style={LITE_GAME_STYLES.heroCode}>{code}</Text>
+      {subtitle ? <Text style={LITE_GAME_STYLES.heroSubtitle}>{subtitle}</Text> : null}
+    </LiteSectionCard>
+  );
+}
+
+export function LitePodiumWinner({ name, scoreText }) {
+  return (
+    <View style={LITE_GAME_STYLES.podiumCard}>
+      <Text style={LITE_GAME_STYLES.podiumLabel}>Champion</Text>
+      <Text style={LITE_GAME_STYLES.podiumName}>{name}</Text>
+      <Text style={LITE_GAME_STYLES.podiumScore}>{scoreText}</Text>
+      <View style={LITE_GAME_STYLES.podiumBars}>
+        <View style={[LITE_GAME_STYLES.podiumBar, { height: 44, backgroundColor: '#F2C15F' }]} />
+        <View style={[LITE_GAME_STYLES.podiumBar, { height: 62 }]} />
+        <View style={[LITE_GAME_STYLES.podiumBar, { height: 34, backgroundColor: LITE_THEME.secondaryAction }]} />
+      </View>
+    </View>
+  );
+}
+
+export const liteScreenContentStyle = {
+  padding: LITE_THEME.contentPadding,
+  paddingTop: LITE_THEME.contentPaddingTop,
+  paddingBottom: LITE_THEME.contentPaddingBottom,
+};
+
+export const liteScreenScrollContentStyle = liteScreenContentStyle;
